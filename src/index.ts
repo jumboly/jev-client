@@ -1,0 +1,29 @@
+export {
+  evaluate,
+  defaultGate,
+  JevError,
+  JEV_MODEL,
+  GATEWAY_EVALUATE_URL,
+  type Answer,
+  type EvaluateOptions,
+  type EvaluateResponse,
+  type JevAuth,
+  type Question,
+  type Usage,
+} from './client'
+export { JevGate, GateWaitTooLongError, type GateState } from './gate'
+export {
+  jevEvaluator,
+  mockEvaluator,
+  memoryStore,
+  recording,
+  recordingKey,
+  replayEvaluator,
+  ReplayMissError,
+  withFallback,
+  isRecoverable,
+  type AnswerSource,
+  type EvalResult,
+  type Evaluator,
+  type RecordingStore,
+} from './evaluator'
