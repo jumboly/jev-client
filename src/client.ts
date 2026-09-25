@@ -19,16 +19,44 @@ export type Question =
   | { type: 'score'; instructions: string; criteria: string[] }
   | { type: 'boolean'; instructions: string; criteria?: { true?: string; false?: string } }
 
-export interface Answer {
-  type: 'choice' | 'score' | 'boolean'
-  choice?: string
-  score?: number
-  probability?: number
-  probabilities?: Record<string, number>
+export interface ChoiceAnswer<K extends string = string> {
+  type: 'choice'
+  choice: K
+  probabilities: Record<K, number>
   confidence?: number
-  /** score のみ（typesafe 経路で返る）。段階番号 → criteria の説明 */
+}
+
+export interface ScoreAnswer {
+  type: 'score'
+  /** 段階間の連続値（0 〜 段階数 - 1） */
+  score: number
+  /** キーは段階番号（"0", "1", …） */
+  probabilities: Record<string, number>
+  confidence?: number
+  /** typesafe 経路でのみ返る。段階番号 → criteria の説明 */
   legend?: Record<string, string>
 }
+
+export interface BooleanAnswer {
+  type: 'boolean'
+  /** 真である確率 */
+  probability: number
+}
+
+export type Answer = ChoiceAnswer | ScoreAnswer | BooleanAnswer
+
+/**
+ * 質問 1 つに対する回答の型。choice は criteria のキーを選択肢の型にする。
+ * T を裸で使って union に分配させる（既定の Record<string, Question> では Answer 全体になる）
+ */
+export type AnswerOf<T extends Question> = T extends { type: 'choice'; criteria: infer C }
+  ? ChoiceAnswer<Extract<keyof C, string>>
+  : T extends { type: 'score' }
+    ? ScoreAnswer
+    : BooleanAnswer
+
+/** 質問の集まりに対する回答の型。利用側で undefined の確認や型の絞り込みを書かずに済むよう、質問の形から決める */
+export type AnswersOf<Q extends Record<string, Question>> = { [K in keyof Q]: AnswerOf<Q[K]> }
 
 export type JevProvider = 'gateway' | 'typesafe'
 
@@ -77,8 +105,8 @@ export interface Usage {
   costUsd: number
 }
 
-export interface EvaluateResponse {
-  answers: Record<string, Answer>
+export interface EvaluateResponse<Q extends Record<string, Question> = Record<string, Question>> {
+  answers: AnswersOf<Q>
   usage: Usage
   /** 実際に呼んだ経路。mock では無し。経路で結果や料金（typesafe は概算）が違い得るので、後から区別できるようにする */
   provider?: JevProvider
@@ -112,13 +140,13 @@ export const defaultGates: Record<JevProvider, JevGate> = { gateway: new JevGate
 /** gateway 経路の既定の流量制御（defaultGates.gateway と同じもの） */
 export const defaultGate = defaultGates.gateway
 
-export async function evaluate(
+export async function evaluate<Q extends Record<string, Question>>(
   auth: JevAuth,
   state: unknown,
-  questions: Record<string, Question>,
+  questions: Q,
   opts: EvaluateOptions = {},
-): Promise<EvaluateResponse> {
-  if (auth.mode === 'mock') return { answers: await mockEvaluate(questions, auth.avoidKeys ?? []), usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } }
+): Promise<EvaluateResponse<Q>> {
+  if (auth.mode === 'mock') return { answers: (await mockEvaluate(questions, auth.avoidKeys ?? [])) as AnswersOf<Q>, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } }
   const { provider, url, apiKey } = resolveEndpoint(auth)
   const gate = opts.gate ?? defaultGates[provider]
   const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -158,7 +186,7 @@ export async function evaluate(
     if (res.ok) {
       const json = await res.json().finally(() => gate.release())
       gate.onSuccess()
-      return { answers: normalize(json), usage: extractUsage(json), provider }
+      return { answers: normalize(json) as AnswersOf<Q>, usage: extractUsage(json), provider }
     }
     // 接続失敗は catch で解放済み。ステータスで判定すると、サーバーが本当に 599 を返したときに解放されず枠が減り続ける
     if (!connectError) gate.release()
@@ -243,10 +271,11 @@ function mockEvaluate(questions: Record<string, Question>, avoidKeys: string[]):
       const preferred = keys.filter((x) => !avoidKeys.includes(x))
       const pool = preferred.length && Math.random() < 0.95 ? preferred : keys
       const choice = pool[Math.floor(Math.random() * pool.length)]
-      out[k] = { type: 'choice', choice, probabilities: { [choice]: 1 }, confidence: 0 }
+      // 実際の応答と同じく全選択肢のキーを持たせる（利用側が probabilities[key] を undefined なしで読めるように）
+      out[k] = { type: 'choice', choice, probabilities: Object.fromEntries(keys.map((x) => [x, x === choice ? 1 : 0])), confidence: 0 }
     } else if (q.type === 'score') {
       const score = Math.floor(Math.random() * q.criteria.length)
-      out[k] = { type: 'score', score, probabilities: { [String(score)]: 1 } }
+      out[k] = { type: 'score', score, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === score ? 1 : 0])) }
     } else {
       out[k] = { type: 'boolean', probability: Math.random() }
     }

@@ -5,7 +5,8 @@ TypeSafe AI の意思決定モデル **Jev** を呼ぶための TypeScript ク�
 - **2 つの経路に対応**: Vercel AI Gateway 経由と TypeSafe AI の直接 API。URL を差し替えて透過プロキシ経由でも呼べる
 - **混雑に強い**: 429/5xx などの一時的な失敗を受けたら全呼び出しで待機を共有し、同時実行数と送信ペースを自動で落とす。時間切れ・再試行も込み
 - **開発しやすい**: 録画再生・ダミーの判断役に差し替えられ、API を消費せずに動作確認できる。ブラウザアプリ用の開発用透過プロキシも同梱
-- ブラウザ（Web Worker 含む）と Node（20.12 以上）で動く。ESM のみ
+- ブラウザ（Web Worker 含む。`AbortSignal.any` に対応した Chrome 116・Firefox 124・Safari 17.4 以降）と Node（20.12 以上）で動く。ESM のみ
+- 回答の型は質問の形から決まる（`choice` は選択肢のキーの型になる）
 
 ## インストール
 
@@ -13,7 +14,7 @@ npm には公開していないので、GitHub から入れる（インストー
 
 ```sh
 npm install github:jumboly/jev-client          # 最新
-npm install github:jumboly/jev-client#v0.2.0   # バージョンを固定
+npm install github:jumboly/jev-client#v0.3.0   # バージョンを固定
 ```
 
 ## クイックスタート
@@ -36,6 +37,16 @@ answers.escalate.probability // 0.71
 usage.costUsd // 0.0000168
 ```
 
+回答の型は質問から推論される。上の例では `answers.category.choice` が `'shipping' | 'billing' | 'other'`、`answers.escalate.probability` が `number` になり、undefined の確認は要らない。質問を別の変数に置くときは、`satisfies` を付けると推論が保たれる。
+
+```ts
+import { evaluate, type Question } from '@jumboly/jev-client'
+
+const questions = {
+  category: { type: 'choice', instructions: '問い合わせの種類', criteria: { shipping: '配送', billing: '請求', other: 'その他' } },
+} satisfies Record<string, Question>
+```
+
 ## 経路を選ぶ（`JevAuth`）
 
 `mode` は必須。経路ごとに形式・料金・混雑の傾向が違うため、既定の経路は持たない。
@@ -53,6 +64,13 @@ usage.costUsd // 0.0000168
 | `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `AI_GATEWAY_API_KEY` | 呼べる | 料金が返る |
 | `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | **呼べない**（CORS 不可） | 料金は返らないので概算になる |
 
+迷ったら `gateway` を選ぶ。ブラウザから直接呼べて、料金も返る。
+
+キーの入手先:
+
+- `gateway`: Vercel のダッシュボードの [AI Gateway API Keys](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys&title=AI+Gateway+API+Keys) で **Create key** を押す（[Vercel のドキュメント](https://vercel.com/docs/ai-gateway/authentication-and-byok)）。
+- `typesafe`: TypeSafe AI が発行する API キー（[API ドキュメント](https://docs.typesafe.ai/api)）。
+
 - `url` を指定すると、その経路の形式のまま指定先へ送る。`apiKey` を省くと `Authorization` を付けない。
 - 経路による形式の違い（モデル名、boolean の呼び名、usage のキー名）はクライアントが吸収する。回答はどちらの経路でも同じ形で返る。
 - ブラウザから `typesafe` を使うときは、CORS の応答を返す透過プロキシを `url` に指定する。プロキシは事前確認（`OPTIONS`）に答え、応答ヘッダを公開する（`Access-Control-Expose-Headers`）必要がある。公開されていないと、`retry-after` などの待機時間の指示を読めない。
@@ -63,18 +81,20 @@ usage.costUsd // 0.0000168
 
 | 質問の `type` | `criteria` | 回答 |
 |---|---|---|
-| `choice` | `{ キー: 説明 }`（最大 255 個） | `choice`（選ばれたキー）、`probabilities`、`confidence` |
+| `choice` | `{ キー: 説明 }`（最大 255 個） | `choice`（選ばれたキー）、`probabilities`（キーは criteria と同じ）、`confidence` |
 | `score` | `[段階の説明, …]`（2〜10 段階） | `score`（段階間の連続値）、`probabilities`（キーは `"0"`, `"1"`, …）、`confidence`、`legend`（typesafe 経路のみ。段階番号 → 説明） |
 | `boolean` | `{ true?, false? }`（省略可） | `probability`（真である確率） |
 
 - `instructions` に判断の指示を書く。state は 32k トークンまで。
 - 上限を超えた質問はサーバーが 4xx で拒否する（送信前にはチェックしない）。
+- `confidence` は返らないことがあるので省略可能な型になっている。`legend` も typesafe 経路でしか返らない。
+- 回答の型は `ChoiceAnswer<キー>` / `ScoreAnswer` / `BooleanAnswer`（まとめて `Answer`）。質問から回答の型を得るには `AnswersOf<typeof questions>` を使う。
 
 戻り値:
 
 ```ts
 {
-  answers: Record<string, Answer>
+  answers: AnswersOf<typeof questions> // 質問のキーごとの回答
   usage: { inputTokens: number; outputTokens: number; costUsd: number }
   provider?: 'gateway' | 'typesafe' // 実際に呼んだ経路（mock では無し）
 }
@@ -92,7 +112,7 @@ await evaluate(auth, state, questions, {
   signal,         // AbortSignal。中断したら再試行せずに投げる
   timeoutMs,      // 1 リクエストの打ち切り（既定 20 秒）。打ち切ったら再試行する
   maxAttempts,    // 最大試行回数（既定 20）
-  maxWaitMs,      // 共有の待機がこれより長ければ待たずに失敗させる（代替へ早く切り替えたいとき）
+  maxWaitMs,      // 共有の待機がこれより長ければ待たずに失敗させる（代替へ早く切り替えたいとき。1 分あたりの送信上限による待ちは対象外）
   onRetry,        // ({ attempt, waitMs, status }) => void。UI に「混雑中・再試行中」を出す
   gate,           // 流量制御を差し替える（後述）
 })
@@ -108,7 +128,9 @@ await evaluate(auth, state, questions, {
 | `x-should-retry` ヘッダがある | その指示に従う |
 | 共有の待機が `maxWaitMs` を超える | 送信せずに `status: 429`・`retryable: true` で投げる |
 
-`isRecoverable(e)` で、再試行や代替で回復し得る失敗かを判定できる。
+`isRecoverable(e)` で、再試行や代替で回復し得る失敗か（UI に「再試行」を出すか）を判定できる。`retryable: false` の `JevError` と中断（`AbortError`）は false、それ以外は true。
+
+`maxWaitMs` が見るのは、失敗を受けたあとの共有の待機だけ。1 分あたりの送信上限（下の「流量制御」）による待ちは、長くても 60 秒以内に必ず送れるので、`maxWaitMs` を超えても失敗させずに待つ。
 
 ## 流量制御（`JevGate`）
 
@@ -199,6 +221,8 @@ export default defineConfig({
 
 ```ts
 // アプリ側: 開発中はプロキシ、本番は利用者のキーで gateway を直接呼ぶ
+import type { JevAuth } from '@jumboly/jev-client'
+
 const auth: JevAuth = import.meta.env.DEV
   ? { mode: 'typesafe', url: '/dev-jev/typesafe' }
   : { mode: 'gateway', apiKey: userKey }
@@ -271,6 +295,10 @@ npx jev-probe --mode gateway --url https://my-proxy.example/v1/evaluate   # プ�
 
 - OpenAI 互換の API からは呼べない（evaluate 系の専用 API を使う）。
 - AI Gateway の `zeroDataRetention` は Vercel Pro 以上限定で、Hobby では 403 になる。このクライアントは指定しない。
+
+## ライセンス
+
+[MIT](LICENSE)
 
 ## 開発
 

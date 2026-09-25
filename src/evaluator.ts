@@ -1,4 +1,4 @@
-import { evaluate as jevEvaluate, JevError, type Answer, type EvaluateOptions, type JevAuth, type JevProvider, type Question, type Usage } from './client.js'
+import { evaluate as jevEvaluate, JevError, type Answer, type AnswersOf, type EvaluateOptions, type JevAuth, type JevProvider, type Question, type Usage } from './client.js'
 import type { JevGate } from './gate.js'
 
 /**
@@ -9,8 +9,8 @@ import type { JevGate } from './gate.js'
 
 export type AnswerSource = 'jev' | 'replay' | 'mock'
 
-export interface EvalResult {
-  answers: Record<string, Answer>
+export interface EvalResult<Q extends Record<string, Question> = Record<string, Question>> {
+  answers: AnswersOf<Q>
   source: AnswerSource
   /** 実際に JEV を呼んだ場合のみ。録画再生・ダミーは課金されないので無し */
   usage?: Usage
@@ -18,7 +18,8 @@ export interface EvalResult {
   provider?: JevProvider
 }
 
-export type Evaluator = (state: unknown, questions: Record<string, Question>, opts?: EvaluateOptions) => Promise<EvalResult>
+/** 質問の形から回答の型が決まるよう、呼び出しごとの型引数を持つ */
+export type Evaluator = <Q extends Record<string, Question>>(state: unknown, questions: Q, opts?: EvaluateOptions) => Promise<EvalResult<Q>>
 
 /** gate を指定すると、この Evaluator の呼び出しは既定（経路ごとの defaultGates）ではなくそれを共有する。呼び出し時の opts.gate が優先 */
 export function jevEvaluator(auth: JevAuth, defaults: { gate?: JevGate } = {}): Evaluator {
@@ -80,10 +81,11 @@ export class ReplayMissError extends Error {
 }
 
 export function replayEvaluator(store: RecordingStore): Evaluator {
-  return async (state, questions) => {
+  return async <Q extends Record<string, Question>>(state: unknown, questions: Q) => {
     const answers = await store.get(await recordingKey(state, questions))
     if (!answers) throw new ReplayMissError()
-    return { answers, source: 'replay' }
+    // キーは state と質問の内容から作るので、同じキーの録画は同じ質問への回答
+    return { answers: answers as AnswersOf<Q>, source: 'replay' as const }
   }
 }
 
@@ -106,7 +108,11 @@ export function withFallback(...chain: Evaluator[]): Evaluator {
   }
 }
 
-/** 失敗理由がリトライ・代替で回復し得るか（UI の「再試行」表示判定用） */
+/**
+ * 失敗理由がリトライ・代替で回復し得るか（UI の「再試行」表示判定用）。
+ * 中断（AbortError）は利用者自身の操作なので、再試行を促さないよう false にする
+ */
 export function isRecoverable(e: unknown): boolean {
-  return !(e instanceof JevError) || e.retryable
+  if (e instanceof JevError) return e.retryable
+  return !(e instanceof Error && e.name === 'AbortError')
 }
