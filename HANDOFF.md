@@ -15,7 +15,7 @@ wikipedia-geo-runner（JEV Geo Race）の中で作った JEV クライアント�
 - `exports` はビルド済みの `dist/`（ESM + `.d.ts`、`types` / `import` 条件付き）を指す。GitHub から直接入れた場合は `prepare` でビルドされる。probe は `bin` の `jev-probe`。
 - CI（`.github/workflows/ci.yml`）: Node 20.19 / 22 / 24 で typecheck・test・`dist` の import 確認。
 - **経路を 2 つ持つ**: `mode: 'gateway'`（Vercel AI Gateway）/ `'typesafe'`（TypeSafe の直接 API `api.typesafe.ai/v1/systemone`）。`url` で透過プロキシに向けられ、`apiKey` 省略時は `Authorization` を付けない。回答は gateway の形式に揃える。typesafe は 2026-09-25 に実 API で形式・CORS 不可・1 分間 120 回で 429 なしを確認済み（`docs/probe-results.md`）。
-- 透過プロキシ: 社内の api-egress-gateway（`https://vercel-ai.gateway.jumboly.jp` / `https://typesafe.gateway.jumboly.jp`）経由で両経路とも動作確認済み。送信元 IP 制限があるので、公開サイトの利用者のブラウザからは使えない。
+- 透過プロキシ: 社内の api-egress-gateway（ソースは `~/src/api-egress-gateway`、`https://vercel-ai.gateway.jumboly.jp` / `https://typesafe.gateway.jumboly.jp`）経由で、両経路とも動作確認済み。CORS に対応しているので、許可された環境のブラウザからも呼べる（typesafe も可）。送信元 IP 制限があるので、公開サイトの利用者のブラウザからは使えない。
 - 公開: GitHub の Public リポジトリ https://github.com/jumboly/jev-client （2026-09-25 作成、CI 通過）。npm には公開しない（`private: true` のまま）。タグはまだ無い。
 
 ## 構成
