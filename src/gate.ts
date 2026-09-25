@@ -1,4 +1,4 @@
-import { sleep } from './sleep'
+import { sleep } from './sleep.js'
 
 /**
  * 全 JEV 呼び出しで共有する流量制御。

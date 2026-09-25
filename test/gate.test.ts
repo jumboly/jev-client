@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { evaluate, defaultGate } from '@jumboly/jev-client'
-import { GateWaitTooLongError, JevGate } from '@jumboly/jev-client'
+import { evaluate, defaultGate } from '../src/index.js'
+import { GateWaitTooLongError, JevGate } from '../src/index.js'
 
 describe('JevGate（全 JEV 呼び出し共有の流量制御）', () => {
   it('1 件の失敗で全員が retry-after まで待つ', async () => {
@@ -118,7 +118,7 @@ describe('evaluate: 並列呼び出しで混雑時に叩き続けない', () => 
       )
     })
     const q = { q: { type: 'choice' as const, instructions: 'x', criteria: { A: 'a' } } }
-    const auth = { mode: 'key' as const, apiKey: 'k' }
+    const auth = { mode: 'gateway' as const, apiKey: 'k' }
     const t0 = Date.now()
     // 1 件目だけ先に送り 429 を受けさせる
     const firstCall = evaluate(auth, 's', q)

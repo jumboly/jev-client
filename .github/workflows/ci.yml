@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 実行時の下限は 20.12（loadEnvFile）だが、テストに使う vite が 20.19 以上を要求するためそこから確かめる
+        node: ['20.19', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # npm ci は prepare でビルドも行う
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # 利用者は dist を import するため、exports の解決先が実際に読み込めるかを確かめる
+      - run: node -e "Promise.all([import('@jumboly/jev-client'), import('@jumboly/jev-client/node')]).then(([a, b]) => { if (!a.evaluate || !b.fileStore) process.exit(1) })"

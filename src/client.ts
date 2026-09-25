@@ -1,13 +1,18 @@
-import { GateWaitTooLongError, JevGate } from './gate'
+import { GateWaitTooLongError, JevGate } from './gate.js'
 
 /**
- * JEV (typesafe-ai/jev) を Vercel AI Gateway のネイティブ HTTP API（/v1/evaluate）で呼ぶ。
- * AI Gateway は CORS を許可しているため、ブラウザからユーザー自身のキーで直接呼べる。
- * 開発時は dev サーバーのプロキシにキーを付与させる（proxy モード）ことで、キーをバンドルに入れない。
+ * JEV を呼ぶ。経路は 2 つあり、URL・モデル名・質問/回答の形が異なるため、ここで吸収する。
+ *  - gateway: Vercel AI Gateway のネイティブ HTTP API（/v1/evaluate）。CORS を許可しており、
+ *    ブラウザからユーザー自身のキーで直接呼べる。料金（marketCost）も返る
+ *  - typesafe: TypeSafe AI の API を直接（/v1/systemone）。boolean は "noul"、usage は snake_case
+ * どちらも url を差し替えれば透過プロキシ（開発時の dev サーバーや、キーを付与する中継）経由で呼べる。
+ * 回答は常に gateway 形式（boolean は probability）へ揃えるので、利用側と録画は経路に依存しない。
  */
 
 export const JEV_MODEL = 'typesafe-ai/jev'
 export const GATEWAY_EVALUATE_URL = 'https://ai-gateway.vercel.sh/v1/evaluate'
+export const TYPESAFE_MODEL = 'jev-latest'
+export const TYPESAFE_EVALUATE_URL = 'https://api.typesafe.ai/v1/systemone'
 
 export type Question =
   | { type: 'choice'; instructions: string; criteria: Record<string, string> }
@@ -23,11 +28,14 @@ export interface Answer {
   confidence?: number
 }
 
+export type JevProvider = 'gateway' | 'typesafe'
+
 export type JevAuth =
-  /** AI Gateway API キーで直接呼ぶ */
-  | { mode: 'key'; apiKey: string }
-  /** 認証をサーバー側で付与するプロキシ経由（例: Vite dev proxy）。url は /v1/evaluate 相当のフル URL */
-  | { mode: 'proxy'; url: string }
+  /**
+   * JEV を HTTP で呼ぶ。経路で形式が変わるため mode は省略できない（既定の経路は持たない）。url を省略すると mode の公式エンドポイント。
+   * apiKey を省略すると Authorization を付けない（認証を付与する透過プロキシ経由の場合）
+   */
+  | { mode: JevProvider; apiKey?: string; url?: string }
   /** API を呼ばず一様乱数で答える。avoidKeys の選択肢は低確率にする（例: ゲームの「戻る」） */
   | { mode: 'mock'; avoidKeys?: string[] }
 
@@ -51,7 +59,10 @@ export interface EvaluateOptions {
   maxWaitMs?: number
   /** 1 リクエストの打ち切り時間（既定 20 秒） */
   timeoutMs?: number
-  /** 流量制御を共有する単位。既定は defaultGate（プロセス / Worker 内で 1 つ） */
+  /**
+   * 流量制御を共有する単位。既定は経路ごとの defaultGates[mode]。
+   * 透過プロキシの先が同じ上流なら、同じ gate を渡して待機を共有させる
+   */
   gate?: JevGate
 }
 
@@ -65,9 +76,14 @@ export interface Usage {
 export interface EvaluateResponse {
   answers: Record<string, Answer>
   usage: Usage
+  /** 実際に呼んだ経路。mock では無し。経路で結果や料金（typesafe は概算）が違い得るので、後から区別できるようにする */
+  provider?: JevProvider
 }
 
-/** 公表単価 $0.042 / 1M 入力トークン（出力は課金なし）。Gateway が料金を返さない場合の概算用 */
+/**
+ * AI Gateway の公表単価 $0.042 / 1M 入力トークン（出力は課金なし）。料金が返らない場合（TypeSafe の直接 API など）の概算用。
+ * 直接 API の単価は未確認のため、あくまで目安
+ */
 const PRICE_PER_INPUT_TOKEN = 0.042 / 1_000_000
 // 送信ペースと待機は gate が制御するので、混雑が続いても一時停止しにくいよう多めにする
 const MAX_ATTEMPTS = 20
@@ -75,8 +91,13 @@ const MAX_ATTEMPTS = 20
 /** 実測（2026-09）で応答が返らず固まる呼び出しがあった（成功時の p90 は 0.5 秒）ため、打ち切って再試行する */
 const DEFAULT_TIMEOUT_MS = 20000
 
-/** プロセス / Worker 内の全 JEV 呼び出しで共有する流量制御。UI は subscribe して待機状況を表示する */
-export const defaultGate = new JevGate(3)
+/**
+ * プロセス / Worker 内の JEV 呼び出しで共有する流量制御。UI は subscribe して待機状況を表示する。
+ * 経路ごとに回数上限も障害も別なので分ける（片方の 429 で空いている経路まで止めないため）
+ */
+export const defaultGates: Record<JevProvider, JevGate> = { gateway: new JevGate(3), typesafe: new JevGate(3) }
+/** gateway 経路の既定の流量制御（defaultGates.gateway と同じもの） */
+export const defaultGate = defaultGates.gateway
 
 export async function evaluate(
   auth: JevAuth,
@@ -85,16 +106,16 @@ export async function evaluate(
   opts: EvaluateOptions = {},
 ): Promise<EvaluateResponse> {
   if (auth.mode === 'mock') return { answers: await mockEvaluate(questions, auth.avoidKeys ?? []), usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } }
-  const gate = opts.gate ?? defaultGate
-  const url = auth.mode === 'key' ? GATEWAY_EVALUATE_URL : auth.url
+  const { provider, url, apiKey } = resolveEndpoint(auth)
+  const gate = opts.gate ?? defaultGates[provider]
   const headers: Record<string, string> = { 'content-type': 'application/json' }
-  if (auth.mode === 'key') headers.authorization = `Bearer ${auth.apiKey}`
-  const body = JSON.stringify({
-    model: JEV_MODEL,
-    state,
-    questions,
-    // zeroDataRetention は Vercel Pro 以上限定で Hobby だと 403 になるため指定しない
-  })
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+  const body = JSON.stringify(
+    provider === 'gateway'
+      ? // zeroDataRetention は Vercel Pro 以上限定で Hobby だと 403 になるため指定しない
+        { model: JEV_MODEL, state, questions }
+      : { model: TYPESAFE_MODEL, state, questions: toTypesafeQuestions(questions) },
+  )
 
   for (let attempt = 1; ; attempt++) {
     try {
@@ -116,7 +137,7 @@ export async function evaluate(
     if (res.ok) {
       const json = await res.json().finally(() => gate.release())
       gate.onSuccess()
-      return { answers: normalize(json), usage: extractUsage(json) }
+      return { answers: normalize(json), usage: extractUsage(json), provider }
     }
     if (res.status !== 599) gate.release()
     const shouldRetryHeader = res.headers.get('x-should-retry')
@@ -133,9 +154,20 @@ export async function evaluate(
   }
 }
 
+function resolveEndpoint(auth: Exclude<JevAuth, { mode: 'mock' }>): { provider: JevProvider; url: string; apiKey?: string } {
+  const url = auth.url ?? (auth.mode === 'gateway' ? GATEWAY_EVALUATE_URL : TYPESAFE_EVALUATE_URL)
+  return { provider: auth.mode, url, apiKey: auth.apiKey }
+}
+
+/** TypeSafe の直接 API は boolean を "noul" と呼ぶ */
+function toTypesafeQuestions(questions: Record<string, Question>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.type === 'boolean' ? { ...q, type: 'noul' } : q]))
+}
+
 function extractUsage(json: any): Usage {
-  const inputTokens = Number(json.usage?.inputTokens ?? 0)
-  const outputTokens = Number(json.usage?.outputTokens ?? 0)
+  // gateway は camelCase、TypeSafe の直接 API は snake_case
+  const inputTokens = Number(json.usage?.inputTokens ?? json.usage?.input_tokens ?? 0)
+  const outputTokens = Number(json.usage?.outputTokens ?? json.usage?.output_tokens ?? 0)
   const market = Number(json.providerMetadata?.gateway?.marketCost)
   return { inputTokens, outputTokens, costUsd: market > 0 ? market : inputTokens * PRICE_PER_INPUT_TOKEN }
 }
@@ -151,7 +183,11 @@ function extractMessage(text: string): string {
 function normalize(json: any): Record<string, Answer> {
   const conf = json.providerMetadata?.typesafe?.confidence ?? {}
   const out: Record<string, Answer> = {}
-  for (const [k, v] of Object.entries<any>(json.answers ?? {})) out[k] = { ...v, confidence: v.confidence ?? conf[k] }
+  for (const [k, v] of Object.entries<any>(json.answers ?? {})) {
+    // TypeSafe の直接 API の noul（{ type: 'noul', noul: 0..1 }）を gateway の boolean 形式に揃える
+    const a = v.type === 'noul' ? (({ noul, ...rest }) => ({ ...rest, type: 'boolean', probability: noul }))(v) : v
+    out[k] = { ...a, confidence: a.confidence ?? conf[k] }
+  }
   return out
 }
 

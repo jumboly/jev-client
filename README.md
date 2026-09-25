@@ -1,8 +1,19 @@
 # @jumboly/jev-client
 
-TypeSafe AI の **Jev**（`typesafe-ai/jev`）を Vercel AI Gateway のネイティブ HTTP API（`POST https://ai-gateway.vercel.sh/v1/evaluate`）で呼ぶための小さなクライアント。ブラウザ（Web Worker 含む）と Node の両方で動く。
+TypeSafe AI の **Jev** を呼ぶための小さなクライアント。Vercel AI Gateway のネイティブ HTTP API（`POST https://ai-gateway.vercel.sh/v1/evaluate`）と TypeSafe AI の直接 API（`POST https://api.typesafe.ai/v1/systemone`）の両方に対応し、URL を差し替えて透過プロキシ経由でも呼べる。ブラウザ（Web Worker 含む）と Node の両方で動く。
 
 JEV を使う別プロジェクトでも同じ失敗を繰り返さないために、wikipedia-geo-runner（JEV Geo Race）から切り出した。切り出し直後の残作業は `HANDOFF.md` を参照。
+
+## インストール
+
+npm には公開していない。GitHub から直接入れる（インストール時に `prepare` が `dist/` をビルドする）。
+
+```sh
+npm install github:jumboly/jev-client        # タグを固定するなら github:jumboly/jev-client#v0.1.0
+npm install ../jev-client                    # 並行して開発するとき（file: 参照。symlink なので先にこちらで npm run build）
+```
+
+`exports` はビルド済みの `dist/`（ESM + `.d.ts`）を指す。計測ツールは `npx jev-probe`（利用側の `.env` の `AI_GATEWAY_API_KEY` を読む）。
 
 ## できること
 
@@ -19,14 +30,19 @@ JEV を使う別プロジェクトでも同じ失敗を繰り返さないため�
 ```ts
 import { evaluate, defaultGate, jevEvaluator, withFallback, replayEvaluator, mockEvaluator, memoryStore } from '@jumboly/jev-client'
 
-const auth = { mode: 'key', apiKey } as const // ブラウザ: ユーザーが入力したキー
-// 開発時: { mode: 'proxy', url: '/dev-jev/v1/evaluate' }（dev サーバー側でキーを付与）
+const auth = { mode: 'gateway', apiKey } as const // Vercel AI Gateway（ブラウザ: ユーザーが入力したキー）
+// { mode: 'typesafe', apiKey }                        TypeSafe AI の直接 API
+// { mode: 'gateway', url: '/dev-jev/v1/evaluate' }    透過プロキシ経由（キーはプロキシ側で付与するなら apiKey 不要）
+// { mode: 'typesafe', url: 'https://my-proxy/...', apiKey }  プロキシがキーを素通しする場合
 const { answers, usage } = await evaluate(auth, { goal: '大坂城周辺' }, {
   move: { type: 'choice', instructions: '次に進むリンクを選べ', criteria: { L1: '大阪市', L2: '1868年' } },
 })
 
+// 流量制御は経路ごとに別（defaultGates.gateway / defaultGates.typesafe。defaultGate は gateway 用）
 defaultGate.subscribe((s) => console.log(s.cooldownUntil, s.concurrency, s.ratePerMin)) // UI に待機状況を出す
 defaultGate.configure({ ratePerMin: 0 }) // 0 = auto（既定）、正の数 = 固定
+// 別の gate を共有させたいとき（例: 同じ上流へ向かう複数の透過プロキシ）
+const viaProxy = jevEvaluator({ mode: 'gateway', url: 'https://my-proxy/v1/evaluate' }, { gate: defaultGate })
 
 // 開発・テスト: JEV → 録画 → ダミー の順に代替（本番で混ぜる場合は source で区別すること）
 const ev = withFallback(jevEvaluator(auth), replayEvaluator(memoryStore()), mockEvaluator({ avoidKeys: ['BACK'] }))
@@ -34,11 +50,29 @@ const ev = withFallback(jevEvaluator(auth), replayEvaluator(memoryStore()), mock
 
 Node では `import { fileStore } from '@jumboly/jev-client/node'` で録画をファイルに保存できる。
 
+## 経路（`JevAuth`）
+
+| `mode` | 既定の URL | モデル名 | 違い |
+|---|---|---|---|
+| `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `typesafe-ai/jev` | CORS 可。料金（`marketCost`）が返る |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `jev-latest` | boolean は `noul`、usage は snake_case。料金は返らない |
+| `mock` | — | — | API を呼ばない（開発・テスト用） |
+
+- `url` を指定すると、その経路の形式のまま別の URL（透過プロキシ）へ送る。`apiKey` を省略すると `Authorization` を付けない。
+- 結果の `provider`（`evaluate()` の戻り値と `Evaluator` の結果）で、どちらの経路の回答かを区別できる。`source` は「JEV の判断か」を表し、経路は含めない。
+- 流量制御は経路ごとに別（片方の 429 で空いている経路まで止めないため）。
+- 質問の形（候補数・段階数）は送信前にチェックしない。仕様が変わり得るので、サーバーの 4xx（再試行しない `JevError`）に任せる。
+- 回答は経路によらず gateway の形式（boolean は `probability`）に揃えるので、利用側と録画は経路に依存しない。
+- `typesafe` の料金は AI Gateway の公表単価からの概算（直接 API の単価は未確認）。
+- `mode` は必須で、既定の経路は持たない（経路で形式・料金・エラー傾向が違うため、呼び出し側で明示する）。
+- `typesafe` の形式は公式ドキュメント（https://docs.typesafe.ai/api 、2026-09）に基づく。**実 API ではまだ確認していない**ため、使う前に `npm run probe -- --mode typesafe` で確かめること。
+
 ## API の要点（2026-09 時点）
 
-- 認証は `Authorization: Bearer <AI_GATEWAY_API_KEY>`。AI Gateway は CORS を許可しており、`retry-after` と `x-should-retry` も公開ヘッダ。
+- 認証は `Authorization: Bearer <キー>`（gateway は `AI_GATEWAY_API_KEY`、typesafe は `TYPESAFE_API_KEY`）。AI Gateway は CORS を許可しており、`retry-after` と `x-should-retry` も公開ヘッダ。
 - choice は最大 255 候補、score は 2〜10 段階（`score` は段階間の連続値で、`probabilities` のキーは `"0"`, `"1"`, …）。state は 32k トークンまで。
 - `confidence` は各回答と `providerMetadata.typesafe.confidence` の両方に入る。料金は `providerMetadata.gateway.marketCost`（定価ベース）。
+- typesafe の直接 API は 401（キー不正）/ 422（検証エラー）/ 429 / 529（過負荷）を返すとされる。429 と 5xx は再試行する。CORS と `retry-after` は文書に記載が無い（ブラウザからは透過プロキシ経由を想定）。
 - `providerOptions.gateway.zeroDataRetention` は Vercel **Pro 以上のみ**。Hobby では 403 になる。
 - OpenAI 互換クライアントからは使えない（evaluate 系の API を使う）。
 

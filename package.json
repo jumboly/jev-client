@@ -5,13 +5,28 @@
   "description": "TypeSafe AI Jev (typesafe-ai/jev) client for Vercel AI Gateway: shared cooldown, adaptive rate limit, timeout, usage/cost, mock/replay/fallback evaluators",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./node": "./src/node.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    }
   },
+  "bin": {
+    "jev-probe": "./dist/probe.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "probe": "tsx src/probe.ts"

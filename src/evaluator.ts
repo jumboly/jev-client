@@ -1,4 +1,5 @@
-import { evaluate as jevEvaluate, JevError, type Answer, type EvaluateOptions, type JevAuth, type Question, type Usage } from './client'
+import { evaluate as jevEvaluate, JevError, type Answer, type EvaluateOptions, type JevAuth, type JevProvider, type Question, type Usage } from './client.js'
+import type { JevGate } from './gate.js'
 
 /**
  * 「質問に答える役」の抽象。アプリは JEV を直接呼ばずこれを通す。
@@ -13,14 +14,17 @@ export interface EvalResult {
   source: AnswerSource
   /** 実際に JEV を呼んだ場合のみ。録画再生・ダミーは課金されないので無し */
   usage?: Usage
+  /** source が jev のときの経路。source は「JEV の判断か」を表すので経路は別の項目に分ける */
+  provider?: JevProvider
 }
 
 export type Evaluator = (state: unknown, questions: Record<string, Question>, opts?: EvaluateOptions) => Promise<EvalResult>
 
-export function jevEvaluator(auth: JevAuth): Evaluator {
+/** gate を指定すると、この Evaluator の呼び出しは既定（経路ごとの defaultGates）ではなくそれを共有する。呼び出し時の opts.gate が優先 */
+export function jevEvaluator(auth: JevAuth, defaults: { gate?: JevGate } = {}): Evaluator {
   return async (state, questions, opts) => {
-    const r = await jevEvaluate(auth, state, questions, opts)
-    return auth.mode === 'mock' ? { answers: r.answers, source: 'mock' } : { answers: r.answers, source: 'jev', usage: r.usage }
+    const r = await jevEvaluate(auth, state, questions, { ...opts, gate: opts?.gate ?? defaults.gate })
+    return auth.mode === 'mock' ? { answers: r.answers, source: 'mock' } : { answers: r.answers, source: 'jev', usage: r.usage, provider: r.provider }
   }
 }
 

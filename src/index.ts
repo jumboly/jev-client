@@ -1,17 +1,21 @@
 export {
   evaluate,
   defaultGate,
+  defaultGates,
   JevError,
   JEV_MODEL,
   GATEWAY_EVALUATE_URL,
+  TYPESAFE_MODEL,
+  TYPESAFE_EVALUATE_URL,
   type Answer,
   type EvaluateOptions,
   type EvaluateResponse,
   type JevAuth,
+  type JevProvider,
   type Question,
   type Usage,
-} from './client'
-export { JevGate, GateWaitTooLongError, type GateState } from './gate'
+} from './client.js'
+export { JevGate, GateWaitTooLongError, type GateState } from './gate.js'
 export {
   jevEvaluator,
   mockEvaluator,
@@ -26,4 +30,4 @@ export {
   type EvalResult,
   type Evaluator,
   type RecordingStore,
-} from './evaluator'
+} from './evaluator.js'

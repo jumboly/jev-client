@@ -9,7 +9,7 @@ import {
   ReplayMissError,
   withFallback,
   type Evaluator,
-} from '../src/index'
+} from '../src/index.js'
 
 const q = { move: { type: 'choice' as const, instructions: 'pick', criteria: { A: 'a', B: 'b', BACK: 'back' } } }
 const fakeJev: Evaluator = async () => ({ answers: { move: { type: 'choice', choice: 'A' } }, source: 'jev', usage: { inputTokens: 10, outputTokens: 0, costUsd: 1e-6 } })
