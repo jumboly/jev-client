@@ -35,12 +35,12 @@
 - gateway の成功は毎分約 36 回で頭打ちになり、残りは 429 だった。同じ時間に typesafe は毎分 120 回すべて成功したので、この上限は Gateway 側にあると考えられる（アカウントやプランの差の可能性もある）。
 - 1 回・2 分間だけの計測なので、経路の選択など判断に使う前に測り直すこと。
 
-## 2026-09-25 / 透過プロキシ経由（api-egress-gateway、CloudFront）
+## 2026-09-25 / 透過プロキシ経由（CloudFront）
 
-`--url https://<upstream>.gateway.jumboly.jp/...` で、社内の透過プロキシ経由で計測した。プロキシはキーを持たず、送った `Authorization` をそのまま中継する。送信元 IP で制限しているため、許可された環境からしか使えない。
+`--url https://<proxy>/...` で、CloudFront 上の透過プロキシ経由で計測した。プロキシはキーを持たず、送った `Authorization` をそのまま中継する。送信元 IP で制限しているため、許可された環境からしか使えない。
 
-- typesafe（`https://typesafe.gateway.jumboly.jp/v1/systemone`）: `--minutes 1 --interval 1000 --burst 2` で 120 回すべて成功。成功時の遅延は中央値 188ms、p90 491ms、最大 585ms。プロキシを通すことによる遅れは、ほぼ見られない（直接呼んだときは中央値 219ms）。
-- gateway（`https://vercel-ai.gateway.jumboly.jp/v1/evaluate`）: 回答・料金は直接呼んだときと同じ形。1 回目の呼び出しで 502 が 5 回連続した（再試行で成功、計 34 秒）。直後の 6 回はすべて 200 で、502 の出どころは未特定。
+- typesafe（`https://<proxy>/v1/systemone`）: `--minutes 1 --interval 1000 --burst 2` で 120 回すべて成功。成功時の遅延は中央値 188ms、p90 491ms、最大 585ms。プロキシを通すことによる遅れは、ほぼ見られない（直接呼んだときは中央値 219ms）。
+- gateway（`https://<proxy>/v1/evaluate`）: 回答・料金は直接呼んだときと同じ形。1 回目の呼び出しで 502 が 5 回連続した（再試行で成功、計 34 秒）。直後の 6 回はすべて 200 で、502 の出どころは未特定。
 - キー無しで typesafe に送ると、401 ではなく 403（`authentication_error`）が返る（直接でもプロキシ経由でも同じ）。
 - CloudFront は、upstream が返したエラー応答にも `x-cache: Error from cloudfront` を付ける。このヘッダだけでは、プロキシ由来のエラーと区別できない（`server` ヘッダや本文で見分ける）。
 
@@ -55,6 +55,6 @@
 | gateway をプロキシ経由 | 成功 |
 | typesafe をプロキシ経由 | 成功 |
 
-- api-egress-gateway は、事前確認に 204 と CORS のヘッダで答え、応答にも `access-control-allow-origin: *` / `access-control-expose-headers: *` を付ける（2026-09-25 の修正以降）。
+- 使ったプロキシは、事前確認に 204 と CORS のヘッダで答え、応答にも `access-control-allow-origin: *` / `access-control-expose-headers: *` を付ける（2026-09-25 の修正以降）。
 - `x-typesafe-request-id` のような標準外の応答ヘッダも JS から読めた。
 - typesafe に不正なキーを送ると 401、キー無しだと 403 になる。
