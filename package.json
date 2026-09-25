@@ -15,7 +15,8 @@
     }
   },
   "bin": {
-    "jev-probe": "./dist/probe.js"
+    "jev-probe": "./dist/probe.js",
+    "jev-proxy": "./dist/proxy-cli.js"
   },
   "files": [
     "dist",
@@ -29,7 +30,8 @@
     "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "probe": "tsx src/probe.ts"
+    "probe": "tsx src/probe.ts",
+    "proxy": "tsx src/proxy-cli.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

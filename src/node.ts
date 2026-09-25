@@ -26,3 +26,5 @@ export async function fileStore(path: string): Promise<RecordingStore & { size()
     size: () => Object.keys(data).length,
   }
 }
+
+export { createJevProxyHandler, jevDevProxy, startJevProxy, type JevProxyOptions, type JevProxyServer } from './proxy.js'

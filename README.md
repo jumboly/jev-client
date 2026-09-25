@@ -4,7 +4,7 @@ TypeSafe AI の意思決定モデル **Jev** を呼ぶための TypeScript ク�
 
 - **2 つの経路に対応**: Vercel AI Gateway 経由と TypeSafe AI の直接 API。URL を差し替えて透過プロキシ経由でも呼べる
 - **混雑に強い**: 429/5xx などの一時的な失敗を受けたら全呼び出しで待機を共有し、同時実行数と送信ペースを自動で落とす。時間切れ・再試行も込み
-- **開発しやすい**: 録画再生・ダミーの判断役に差し替えられ、API を消費せずに動作確認できる
+- **開発しやすい**: 録画再生・ダミーの判断役に差し替えられ、API を消費せずに動作確認できる。ブラウザアプリ用の開発用透過プロキシも同梱
 - ブラウザ（Web Worker 含む）と Node（20.12 以上）で動く。ESM のみ
 
 ## インストール
@@ -43,7 +43,7 @@ usage.costUsd // 0.0000168
 ```ts
 { mode: 'gateway', apiKey }                                    // Vercel AI Gateway
 { mode: 'typesafe', apiKey }                                   // TypeSafe AI の直接 API
-{ mode: 'gateway', url: '/dev-jev/v1/evaluate' }               // 透過プロキシ（キーはプロキシ側で付与）
+{ mode: 'typesafe', url: '/dev-jev/typesafe' }                 // 開発用の透過プロキシ（キーはプロキシ側で付与。下の「開発用の透過プロキシ」）
 { mode: 'typesafe', url: 'https://my-proxy.example/jev', apiKey } // 透過プロキシ（キーを素通し）
 { mode: 'mock', avoidKeys: ['BACK'] }                          // API を呼ばず乱数で答える（開発用）
 ```
@@ -57,7 +57,7 @@ usage.costUsd // 0.0000168
 - 経路による形式の違い（モデル名、boolean の呼び名、usage のキー名）はクライアントが吸収する。回答はどちらの経路でも同じ形で返る。
 - ブラウザから `typesafe` を使うときは、CORS の応答を返す透過プロキシを `url` に指定する。プロキシは事前確認（`OPTIONS`）に答え、応答ヘッダを公開する（`Access-Control-Expose-Headers`）必要がある。公開されていないと、`retry-after` などの待機時間の指示を読めない。
 - CORS で拒否されると、ブラウザはネットワーク断と同じエラーを返す。そのため、一度も応答を得ていない URL への接続失敗は、3 回で打ち切るようにしている（下の「オプションとエラー」）。
-- ブラウザでキーを扱うときは、利用者自身のキーをブラウザ内にだけ保存する。開発中は dev サーバーの透過プロキシでキーを付与すれば、バンドルにキーが入らない。
+- ブラウザでキーを扱うときは、利用者自身のキーをブラウザ内にだけ保存する。開発中は同梱の[開発用の透過プロキシ](#開発用の透過プロキシ)でキーを付与すれば、バンドルにキーが入らず、typesafe 経路もブラウザから呼べる。
 
 ## 質問と回答
 
@@ -173,6 +173,78 @@ r.usage    // source が 'jev' のときのみ
 - **録画やダミーの回答は JEV の判断ではない。** 本番で `withFallback` を使う場合は `source` を見て区別し、JEV の結果として扱わないこと。
 - `jevEvaluator(auth, { gate })` で、その Evaluator が使う流量制御を固定できる。
 
+## 開発用の透過プロキシ
+
+ブラウザアプリの開発中に、Node 側で API キーを付けて JEV へ中継する。キーはブラウザにもバンドルにも入らない。CORS に答えるので、ブラウザから直接呼べない typesafe 経路も使える。
+
+**開発時の動作確認専用。** キーを持つ中継なので、届く範囲の誰でもそのキーで JEV を呼べてしまう。そのため、次のようにしている。
+
+- Vite プラグインは dev サーバー（`vite` / `vite dev`）でだけ有効になり、`vite build` / `vite preview` には入らない。
+- 単体サーバーは既定で `127.0.0.1` だけで待ち受ける。
+- どちらも、localhost（`localhost` / `127.0.0.1` / `[::1]` / `*.localhost`）以外の `Origin` からのリクエストは 403 で拒否する。他のサイトを開いたブラウザから、裏で送られるのを防ぐため。
+
+キーは、`apiKey` → 環境変数 → `.env` の順に探す（`AI_GATEWAY_API_KEY` / `TYPESAFE_API_KEY`）。見つからなければ、ブラウザから来た `Authorization` をそのまま中継する。
+
+### Vite
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+import { jevDevProxy } from '@jumboly/jev-client/node'
+
+export default defineConfig({
+  plugins: [jevDevProxy({ mode: 'typesafe' })], // /dev-jev/typesafe に置く。キーは envDir（無ければ root）の .env から
+})
+```
+
+```ts
+// アプリ側: 開発中はプロキシ、本番は利用者のキーで gateway を直接呼ぶ
+const auth: JevAuth = import.meta.env.DEV
+  ? { mode: 'typesafe', url: '/dev-jev/typesafe' }
+  : { mode: 'gateway', apiKey: userKey }
+```
+
+### 単体サーバー（Vite 以外の dev サーバー、静的ファイルなど）
+
+```sh
+npx jev-proxy --mode typesafe   # http://127.0.0.1:8787 で待ち受ける（パスは問わない）
+```
+
+```ts
+evaluate({ mode: 'typesafe', url: 'http://127.0.0.1:8787' }, state, questions)
+```
+
+| オプション | 既定 | 内容 |
+|---|---|---|
+| `--mode` | （必須） | `gateway` / `typesafe`。クライアントと同じ経路にする |
+| `--port` | 8787 | 待ち受けるポート |
+| `--host` | `127.0.0.1` | 待ち受けるアドレス。loopback 以外にすると警告を出す |
+| `--env-file` | `.env` | キーを読むファイル |
+| `--upstream` | 経路の公式 URL | 中継先 |
+
+### Express などのミドルウェア
+
+```ts
+import { createJevProxyHandler } from '@jumboly/jev-client/node'
+
+app.use('/dev-jev/typesafe', createJevProxyHandler({ mode: 'typesafe' }))
+```
+
+`startJevProxy(opts)` で、単体サーバーをコードから起動することもできる。共通のオプション:
+
+| オプション | 既定 | 内容 |
+|---|---|---|
+| `mode` | （必須） | 中継先の経路 |
+| `apiKey` | 環境変数 → `envFile` | 付与するキー |
+| `envFile` | `.env` | キーを読むファイル（Vite プラグインでは envDir の `.env`） |
+| `upstream` | 経路の公式 URL | 中継先 |
+| `allowedOrigins` | localhost のみ | 許可する Origin（`string[]` か `(origin) => boolean`）。LAN の別の端末から確かめるときなどに足す |
+| `path` | `/dev-jev/<mode>` | Vite プラグインのみ。プロキシを置くパス |
+
+- 中継するのは本文と `Content-Type` だけ。`Cookie` や `Origin` は上流に渡さない。
+- 上流のステータス・本文・`retry-after` などのヘッダはそのまま返すので、流量制御は直接呼んだときと同じように働く。
+- 上流に接続できなければ 502 を返す（クライアントは再試行する）。
+
 ## 混雑の傾向を測る（`jev-probe`）
 
 流量制御を通さずに一定間隔で送り、生の応答（ステータス、`retry-after`、所要時間）を JSONL に記録する。混雑の傾向は時期によって変わるので、上限などを判断する前に測り直すこと。少量なら料金は 1 円未満。
@@ -208,6 +280,7 @@ npm test            # vitest
 npm run typecheck
 npm run build       # dist/ を出力
 npm run probe -- --mode gateway --minutes 1   # ソースから jev-probe を実行（.env が必要）
+npm run proxy -- --mode typesafe               # ソースから jev-proxy を実行（.env が必要）
 npx tsx scripts/verify-typesafe.ts             # typesafe 経路の生の応答・CORS・変換結果を確かめる（4 回送信）
 ```
 

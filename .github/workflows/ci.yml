@@ -23,4 +23,4 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       # 利用者は dist を import するため、exports の解決先が実際に読み込めるかを確かめる
-      - run: node -e "Promise.all([import('@jumboly/jev-client'), import('@jumboly/jev-client/node')]).then(([a, b]) => { if (!a.evaluate || !b.fileStore) process.exit(1) })"
+      - run: node -e "Promise.all([import('@jumboly/jev-client'), import('@jumboly/jev-client/node')]).then(([a, b]) => { if (!a.evaluate || !b.fileStore || !b.jevDevProxy) process.exit(1) })"
