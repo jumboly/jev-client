@@ -14,11 +14,11 @@ try {
 const key = process.env.TYPESAFE_API_KEY
 if (!key) throw new Error('TYPESAFE_API_KEY がありません（.env に書くこと）')
 
-const state = { article: '大阪府', goal: '大坂城から半径 2km 以内' }
+const state = { message: '先週注文した商品がまだ届きません。今日中に届かないと困ります' }
 const questions = {
-  next: { type: 'choice', instructions: 'ゴールに近づくリンクを選べ', criteria: { L1: '大阪市', L2: '近畿地方', L3: '1868年' } },
-  dist: { type: 'score', instructions: 'ゴールまでの近さ', criteria: ['遠い', 'やや遠い', 'やや近い', '近い'] },
-  near: { type: 'noul', instructions: 'この記事はゴールの範囲内の場所か' },
+  category: { type: 'choice', instructions: '問い合わせの種類', criteria: { shipping: '配送', billing: '請求', other: 'その他' } },
+  urgency: { type: 'score', instructions: '緊急度', criteria: ['低い', 'やや低い', 'やや高い', '高い'] },
+  escalate: { type: 'noul', instructions: '担当者への引き継ぎが必要か' },
 }
 
 // 流量制御の判断に使うヘッダと、ブラウザから直接呼べるかに関わるヘッダ
@@ -56,7 +56,7 @@ async function raw(label: string, body: unknown) {
 await raw('生の応答（choice / score / noul）', { model: TYPESAFE_MODEL, state, questions })
 
 // 2. gateway と同じ呼び名 boolean を受け付けるか（受け付けるなら変換が不要になる）
-await raw('type: boolean を送った場合', { model: TYPESAFE_MODEL, state, questions: { near: { ...questions.near, type: 'boolean' } } })
+await raw('type: boolean を送った場合', { model: TYPESAFE_MODEL, state, questions: { escalate: { ...questions.escalate, type: 'boolean' } } })
 
 // 3. ブラウザからのプリフライトに応じるか（CORS）
 const pre = await fetch(TYPESAFE_EVALUATE_URL, {
@@ -71,9 +71,9 @@ const r = await evaluate(
   { mode: 'typesafe', apiKey: key },
   state,
   {
-    next: { type: 'choice', instructions: questions.next.instructions, criteria: questions.next.criteria },
-    dist: { type: 'score', instructions: questions.dist.instructions, criteria: questions.dist.criteria },
-    near: { type: 'boolean', instructions: questions.near.instructions },
+    category: { type: 'choice', instructions: questions.category.instructions, criteria: questions.category.criteria },
+    urgency: { type: 'score', instructions: questions.urgency.instructions, criteria: questions.urgency.criteria },
+    escalate: { type: 'boolean', instructions: questions.escalate.instructions },
   },
   { gate: new JevGate(1), maxAttempts: 3 },
 )

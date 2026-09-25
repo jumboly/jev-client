@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * JEV（AI Gateway）のエラー傾向を実測する（ゲートを通さず生の応答を記録）。
+ * JEV のエラー傾向を経路ごとに実測する（ゲートを通さず生の応答を記録）。
  * 429/503 の傾向（上限の値・連続性・retry-after の意味）は時期で変わり得るので、判断の前にこれで再計測する。
  *   npm run probe -- --mode gateway --minutes 6 --interval 1000 --burst 4 --out .cache/probe.jsonl
  *   npm run probe -- --mode typesafe                                 # TypeSafe の直接 API（TYPESAFE_API_KEY）
@@ -42,8 +42,8 @@ const url = a.url ?? (gateway ? GATEWAY_EVALUATE_URL : TYPESAFE_EVALUATE_URL)
 
 const body = JSON.stringify({
   model: gateway ? JEV_MODEL : TYPESAFE_MODEL,
-  state: { goal: '大坂城周辺（半径2km）', currentArticle: '大阪府' },
-  questions: { move: { type: 'choice', instructions: 'ゴールに近づくリンクを選べ', criteria: { L1: '大阪市', L2: '近畿地方', L3: '1868年' } } },
+  state: { message: '先週注文した商品がまだ届きません。今日中に届かないと困ります' },
+  questions: { category: { type: 'choice', instructions: '問い合わせの種類', criteria: { shipping: '配送', billing: '請求', other: 'その他' } } },
 })
 
 async function one(burst: number, idx: number) {

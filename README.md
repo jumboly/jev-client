@@ -13,7 +13,7 @@ npm には公開していないので、GitHub から入れる（インストー
 
 ```sh
 npm install github:jumboly/jev-client          # 最新
-npm install github:jumboly/jev-client#v0.1.0   # バージョンを固定
+npm install github:jumboly/jev-client#v0.2.0   # バージョンを固定
 ```
 
 ## クイックスタート
@@ -23,16 +23,16 @@ import { evaluate } from '@jumboly/jev-client'
 
 const { answers, usage } = await evaluate(
   { mode: 'gateway', apiKey: process.env.AI_GATEWAY_API_KEY },
-  { article: '大阪府', goal: '大坂城から半径 2km 以内' }, // state: 判断の材料（文字列・オブジェクト・配列）
+  { message: '先週注文した商品がまだ届きません。今日中に届かないと困ります' }, // state: 判断の材料（文字列・オブジェクト・配列）
   {
-    next: { type: 'choice', instructions: 'ゴールに近づくリンクを選べ', criteria: { L1: '大阪市', L2: '近畿地方', L3: '1868年' } },
-    near: { type: 'boolean', instructions: 'ゴールに近いか' },
+    category: { type: 'choice', instructions: '問い合わせの種類', criteria: { shipping: '配送', billing: '請求', other: 'その他' } },
+    escalate: { type: 'boolean', instructions: '担当者への引き継ぎが必要か' },
   },
 )
 
-answers.next.choice // 'L1'
-answers.next.probabilities // { L1: 0.82, L2: 0.15, L3: 0.03 }
-answers.near.probability // 0.64
+answers.category.choice // 'shipping'
+answers.category.probabilities // { shipping: 0.93, billing: 0.02, other: 0.05 }
+answers.escalate.probability // 0.71
 usage.costUsd // 0.0000168
 ```
 
