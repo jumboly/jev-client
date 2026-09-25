@@ -38,7 +38,7 @@ export type JevAuth =
    * apiKey を省略すると Authorization を付けない（認証を付与する透過プロキシ経由の場合）
    */
   | { mode: JevProvider; apiKey?: string; url?: string }
-  /** API を呼ばず一様乱数で答える。avoidKeys の選択肢は低確率にする（例: ゲームの「戻る」） */
+  /** API を呼ばず一様乱数で答える。avoidKeys の選択肢は低確率にする（例: 「戻る」のような、選ばれ続けると動作確認にならない選択肢） */
   | { mode: 'mock'; avoidKeys?: string[] }
 
 export class JevError extends Error {

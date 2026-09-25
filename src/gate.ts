@@ -2,7 +2,7 @@ import { sleep } from './sleep.js'
 
 /**
  * 全 JEV 呼び出しで共有する流量制御。
- * JEV の 429/503 は「しばらく続く」傾向があり、複数 Runner がそれぞれ独立に再試行すると
+ * JEV の 429/503 は「しばらく続く」傾向があり、複数の呼び出し元がそれぞれ独立に再試行すると
  * 混雑中に叩き続けて待ち時間が延びる。そこで
  *  - 1 つでも失敗したら、retry-after（無ければ連続失敗数に応じた指数バックオフ）の時刻まで全員待つ
  *  - 失敗のたびに同時実行数を半減し、成功が続いたら 1 ずつ戻す（AIMD）
@@ -41,7 +41,7 @@ export class GateWaitTooLongError extends Error {
 // 成功がこの回数続いたら同時実行数を 1 戻す
 const RECOVER_AFTER = 5
 const MAX_BACKOFF_MS = 60000
-// auto: 学習した上限の下限（推定が極端に小さくなりゲームが止まるのを防ぐ）
+// auto: 学習した上限の下限（推定が極端に小さくなり呼び出しがほぼ止まるのを防ぐ）
 const MIN_LEARNED_RATE = 5
 // auto: 429 がこの間隔起きなければ上限を 25% 緩め、RELAX_CEIL を超えたら上限なしに戻す
 const RELAX_INTERVAL_MS = 60000

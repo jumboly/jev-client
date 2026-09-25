@@ -18,7 +18,7 @@ const { values: a } = parseArgs({
   options: {
     minutes: { type: 'string', default: '6' },
     interval: { type: 'string', default: '1000' },
-    // 1 回に同時に送る数（複数 Runner の同時実行を模す）
+    // 1 回に同時に送る数（複数の呼び出し元の同時実行を模す）
     burst: { type: 'string', default: '4' },
     out: { type: 'string', default: '.cache/probe.jsonl' },
     // 経路で傾向が違い得るので、どの経路を測るかは毎回明示させる
