@@ -48,13 +48,15 @@ usage.costUsd // 0.0000168
 { mode: 'mock', avoidKeys: ['BACK'] }                          // API を呼ばず乱数で答える（開発用）
 ```
 
-| `mode` | 既定の URL | キー | 備考 |
-|---|---|---|---|
-| `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `AI_GATEWAY_API_KEY` | CORS 可なのでブラウザから直接呼べる。料金が返る |
-| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | CORS 不可なので、ブラウザからは透過プロキシ経由で呼ぶ。料金は返らないので概算になる |
+| `mode` | 既定の URL | キー | ブラウザから直接 | 備考 |
+|---|---|---|---|---|
+| `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `AI_GATEWAY_API_KEY` | 呼べる | 料金が返る |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | **呼べない**（CORS 不可） | 料金は返らないので概算になる |
 
 - `url` を指定すると、その経路の形式のまま指定先へ送る。`apiKey` を省くと `Authorization` を付けない。
 - 経路による形式の違い（モデル名、boolean の呼び名、usage のキー名）はクライアントが吸収する。回答はどちらの経路でも同じ形で返る。
+- ブラウザから `typesafe` を使うときは、CORS の応答を返す透過プロキシを `url` に指定する。プロキシは事前確認（`OPTIONS`）に答え、応答ヘッダを公開する（`Access-Control-Expose-Headers`）必要がある。公開されていないと、`retry-after` などの待機時間の指示を読めない。
+- CORS で拒否されると、ブラウザはネットワーク断と同じエラーを返すので、クライアントは 599 として再試行する。
 - ブラウザでキーを扱うときは、利用者自身のキーをブラウザ内にだけ保存する。開発中は dev サーバーの透過プロキシでキーを付与すれば、バンドルにキーが入らない。
 
 ## 質問と回答

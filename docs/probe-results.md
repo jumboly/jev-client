@@ -43,3 +43,18 @@
 - gateway（`https://vercel-ai.gateway.jumboly.jp/v1/evaluate`）: 回答・料金は直接呼んだときと同じ形。1 回目の呼び出しで 502 が 5 回連続した（再試行で成功、計 34 秒）。直後の 6 回はすべて 200 で、502 の出どころは未特定。
 - キー無しで typesafe に送ると、401 ではなく 403（`authentication_error`）が返る（直接でもプロキシ経由でも同じ）。
 - CloudFront は、upstream が返したエラー応答にも `x-cache: Error from cloudfront` を付ける。このヘッダだけでは、プロキシ由来のエラーと区別できない（`server` ヘッダや本文で見分ける）。
+
+## 2026-09-25 / ブラウザ（Chromium）からの呼び出し
+
+ビルドした `dist` を `http://localhost:<port>` から ES module として読み込み、Playwright の Chromium で `evaluate()` を呼んだ。
+
+| 経路 | 結果 |
+|---|---|
+| gateway を直接 | 成功 |
+| typesafe を直接 | 失敗（CORS）。`fetch` が TypeError になり、599 として再試行したあと、理由が空の `JEV 599: ` で終わった |
+| gateway をプロキシ経由 | 成功 |
+| typesafe をプロキシ経由 | 成功 |
+
+- api-egress-gateway は、事前確認に 204 と CORS のヘッダで答え、応答にも `access-control-allow-origin: *` / `access-control-expose-headers: *` を付ける（2026-09-25 の修正以降）。
+- `x-typesafe-request-id` のような標準外の応答ヘッダも JS から読めた。
+- typesafe に不正なキーを送ると 401、キー無しだと 403 になる。
