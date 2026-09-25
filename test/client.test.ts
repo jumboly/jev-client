@@ -208,3 +208,60 @@ describe('経路ごとの流量制御と provider', () => {
     expect(bound.state.consecutiveFailures).toBe(1)
   })
 })
+
+describe('接続できないとき（ネットワーク断・CORS による拒否）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+  // 打ち切りの判定は URL ごとなので、テストごとに別の URL にする
+  const freshUrl = () => `https://unreached-${Math.random().toString(36).slice(2)}.example/v1/systemone`
+
+  /** バックオフの待機（最大 60 秒）を偽のタイマーで進めながら、決着するまで待つ */
+  async function settle<T>(p: Promise<T>): Promise<T> {
+    let done = false
+    p.finally(() => (done = true)).catch(() => {})
+    for (let i = 0; i < 100 && !done; i++) await vi.advanceTimersByTimeAsync(10_000)
+    return p
+  }
+
+  /** 指定回数まで成功し、以降はブラウザの CORS 拒否と同じ TypeError を投げる fetch */
+  function stubConnectFailure(successes = 0) {
+    const calls = { n: 0 }
+    vi.stubGlobal('fetch', async () => {
+      if (calls.n++ < successes) return ok()
+      throw new TypeError('Failed to fetch')
+    })
+    return calls
+  }
+
+  it('一度も応答が無い URL への接続失敗は 3 回で打ち切り、理由を含めて投げる', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const calls = stubConnectFailure()
+    const url = freshUrl()
+    const err = await settle(evaluate({ mode: 'typesafe', url, apiKey: 't' }, 's', q, { gate: new JevGate(3) }).catch((e) => e))
+    expect(calls.n).toBe(3)
+    expect(err).toMatchObject({ status: 599, retryable: true })
+    expect(err.message).toContain('ネットワーク断または CORS による拒否（TypeError: Failed to fetch）')
+    expect(err.message).toContain(url)
+  })
+
+  it('一度でも応答を受け取った URL の接続失敗は一時的とみなし、maxAttempts まで再試行する', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const calls = stubConnectFailure(1)
+    const auth = { mode: 'typesafe' as const, url: freshUrl(), apiKey: 't' }
+    const gate = new JevGate(3)
+    await evaluate(auth, 's', q, { gate })
+    const err = await settle(evaluate(auth, 's', q, { gate, maxAttempts: 5 }).catch((e) => e))
+    expect(calls.n).toBe(1 + 5)
+    expect(err.message).toBe('JEV 599: ネットワーク断または CORS による拒否（TypeError: Failed to fetch）')
+  })
+
+  it('時間切れはメッセージで区別する', async () => {
+    vi.stubGlobal('fetch', (_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))),
+    )
+    const err = await evaluate({ mode: 'typesafe', url: freshUrl(), apiKey: 't' }, 's', q, { gate: new JevGate(3), timeoutMs: 30, maxAttempts: 1 }).catch((e) => e)
+    expect(err.message).toBe('JEV 599: 時間切れ（30ms 応答なし）')
+  })
+})

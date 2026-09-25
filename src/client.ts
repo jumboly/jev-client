@@ -48,6 +48,8 @@ export class JevError extends Error {
     readonly retryable: boolean,
   ) {
     super(message)
+    // ログや console で Error ではなく JevError と表示されるようにする
+    this.name = 'JevError'
   }
 }
 
@@ -94,6 +96,15 @@ const MAX_ATTEMPTS = 20
 const DEFAULT_TIMEOUT_MS = 20000
 
 /**
+ * 一度も HTTP 応答を得ていない URL への接続失敗は、この回数で打ち切る。
+ * CORS による拒否や URL の誤りは再試行しても直らないが、ブラウザではネットワーク断と区別できないため、
+ * MAX_ATTEMPTS まで待機を伸ばしながら続けると、設定の誤りに気付くまで数分かかる
+ */
+const UNREACHED_MAX_ATTEMPTS = 3
+/** HTTP 応答（ステータスを問わない）を一度でも受け取った URL。届くと分かっている URL の接続失敗は一時的とみなす */
+const reachedUrls = new Set<string>()
+
+/**
  * プロセス / Worker 内の JEV 呼び出しで共有する流量制御。UI は subscribe して待機状況を表示する。
  * 経路ごとに回数上限も障害も別なので分ける（片方の 429 で空いている経路まで止めないため）
  */
@@ -127,13 +138,21 @@ export async function evaluate(
       throw e
     }
     let res: Response
+    // 599（接続できなかった）の理由。サーバーの本文が無いので、代わりにこれをメッセージにする
+    let connectError: { reason: string; timedOut: boolean } | undefined
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const timeout = AbortSignal.timeout(timeoutMs)
     try {
-      const timeout = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       res = await fetch(url, { method: 'POST', headers, body, signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout })
+      reachedUrls.add(url)
     } catch (e) {
       gate.release()
       if (opts.signal?.aborted) throw e
-      // ネットワーク断・時間切れは一時的なことが多いのでリトライ対象
+      // ネットワーク断・時間切れは一時的なことが多いのでリトライ対象。
+      // CORS による拒否もブラウザではここに来る（fetch が TypeError になり、ネットワーク断と区別できない）
+      connectError = timeout.aborted
+        ? { reason: `時間切れ（${timeoutMs}ms 応答なし）`, timedOut: true }
+        : { reason: `ネットワーク断または CORS による拒否（${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}）`, timedOut: false }
       res = new Response(null, { status: 599 })
     }
     if (res.ok) {
@@ -146,11 +165,16 @@ export async function evaluate(
     const retryable =
       shouldRetryHeader === 'true' ||
       (shouldRetryHeader !== 'false' && (res.status === 429 || res.status >= 500 || res.status === 408))
-    const msg = await res.text().catch(() => '')
-    if (!retryable) throw new JevError(`JEV ${res.status}: ${extractMessage(msg)}`, res.status, false)
+    const msg = connectError?.reason ?? extractMessage(await res.text().catch(() => ''))
+    if (!retryable) throw new JevError(`JEV ${res.status}: ${msg}`, res.status, false)
     // 1 件の失敗で全員を待たせる。次の試行は acquire() が共有の待機時刻まで止める
     const waitMs = gate.onTransientFailure(res.status, retryAfterMs(res.headers))
-    if (attempt >= (opts.maxAttempts ?? MAX_ATTEMPTS)) throw new JevError(`JEV ${res.status}: ${extractMessage(msg)}`, res.status, true)
+    const maxAttempts = opts.maxAttempts ?? MAX_ATTEMPTS
+    // 時間切れは相手に届いている可能性があるので、打ち切りの対象は接続そのものの失敗だけにする
+    const unreached = connectError && !connectError.timedOut && !reachedUrls.has(url)
+    if (unreached && attempt >= Math.min(maxAttempts, UNREACHED_MAX_ATTEMPTS))
+      throw new JevError(`JEV ${res.status}: ${msg}。${url} からはまだ一度も応答が無いため ${attempt} 回で打ち切った（URL・CORS・ネットワークを確認すること）`, res.status, true)
+    if (attempt >= maxAttempts) throw new JevError(`JEV ${res.status}: ${msg}`, res.status, true)
     opts.onRetry?.({ attempt, waitMs, status: res.status })
   }
 }
