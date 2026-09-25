@@ -14,8 +14,8 @@ wikipedia-geo-runner（JEV Geo Race）の中で作った JEV クライアント�
 - `npm test`（28 件）・`npm run typecheck`・`npm run build` が通る。
 - `exports` はビルド済みの `dist/`（ESM + `.d.ts`、`types` / `import` 条件付き）を指す。GitHub から直接入れた場合は `prepare` でビルドされる。probe は `bin` の `jev-probe`。
 - CI（`.github/workflows/ci.yml`）: Node 20.19 / 22 / 24 で typecheck・test・`dist` の import 確認。
-- **経路を 2 つ持つ**: `mode: 'gateway'`（Vercel AI Gateway）/ `'typesafe'`（TypeSafe の直接 API `api.typesafe.ai/v1/systemone`）。`url` で透過プロキシに向けられ、`apiKey` 省略時は `Authorization` を付けない。回答は gateway の形式に揃える。**typesafe は公式ドキュメント準拠で、実 API では未確認**（`TYPESAFE_API_KEY` が手元に無い）。
-- 公開方法は決定済み: GitHub の Public リポジトリ `jumboly/jev-client`、npm には公開しない（`private: true` のまま）。**リポジトリはまだ作っていない**（Claude からの作成は権限の自動判定で止められた）。ここまでの変更も未コミットの可能性がある。
+- **経路を 2 つ持つ**: `mode: 'gateway'`（Vercel AI Gateway）/ `'typesafe'`（TypeSafe の直接 API `api.typesafe.ai/v1/systemone`）。`url` で透過プロキシに向けられ、`apiKey` 省略時は `Authorization` を付けない。回答は gateway の形式に揃える。typesafe は 2026-09-25 に実 API で形式・CORS 不可・1 分間 120 回で 429 なしを確認済み（`docs/probe-results.md`）。
+- 公開: GitHub の Public リポジトリ https://github.com/jumboly/jev-client （2026-09-25 作成、CI 通過）。npm には公開しない（`private: true` のまま）。タグはまだ無い。
 
 ## 構成
 
@@ -41,8 +41,8 @@ wikipedia-geo-runner（JEV Geo Race）の中で作った JEV クライアント�
 
 ## 残作業
 
-1. **GitHub リポジトリの作成と push**: `gh repo create jumboly/jev-client --public --source . --push`。ユーザーが実行するか、権限を許可してもらう。必要ならタグ `v0.1.0` を打つ。
-2. **typesafe 経路の実測**: `.env` に `TYPESAFE_API_KEY` を入れて `npm run probe -- --mode typesafe --minutes 1 --burst 1`。boolean（`noul`）の回答の形、429 のときの `retry-after` の有無、CORS を確かめ、結果を `docs/probe-results.md` に、形式の違いがあれば README とコードに反映する。
+1. **タグ `v0.1.0` を打つ**（ユーザーに確認してから）。利用側が `github:jumboly/jev-client#v0.1.0` で固定できるようにする。
+2. **typesafe 経路で 429 を受けたときの確認**: 毎分 120 回では 429 が出なかった。実際に受けたら `retry-after` / `retry-after-ms` の値の意味を `docs/probe-results.md` に記録する（負荷をかけて意図的に起こすかはユーザーに確認）。
 3. **wikipedia-geo-runner を切り替える**: 依存を `github:jumboly/jev-client` にする（開発中は `file:../jev-client`、symlink なので先にこちらで `npm run build`）。`packages/jev-client/` と root `package.json` の `workspaces` を削除し、`probe` スクリプトを `jev-probe --mode gateway` にする。CI（GitHub Actions の `npm ci`）で解決できることを確認する。旧 `mode` を使っている 3 箇所（`src/storage/apiKey.ts:48,50`、`src/cli/race.ts:85`）を `mode: 'gateway'` に書き換える。向こうには未コミットの作業が混在しているので、コミットはユーザーに確認してから。ゲーム側が使っているもの: `evaluate` 系の型（`Answer`, `EvaluateOptions`, `JevAuth`, `JevError`）、`defaultGate` / `GateState`、`Evaluator` / `AnswerSource` / `jevEvaluator` / `mockEvaluator` / `replayEvaluator` / `recording` / `withFallback` / `memoryStore` / `isRecoverable`、`@jumboly/jev-client/node` の `fileStore`。
 4. **スキル `j-jev` のパスを更新**: `~/src/cc-jumboly/skills/j-jev/SKILL.md` の SDK の場所（現在は `~/src/jev-wiki-geo-runner/packages/jev-client/` と、そのリポジトリの GitHub URL）を新しいリポジトリに向け、2 経路（gateway / typesafe）に対応したことも書く。`~/.claude/skills/j-jev/` へ再インストールする（cc-jumboly の INSTALL.md の手順）。
 

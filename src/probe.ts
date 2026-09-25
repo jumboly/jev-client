@@ -50,6 +50,7 @@ async function one(burst: number, idx: number) {
   const t = Date.now()
   let status = 0
   let retryAfter: string | null = null
+  let retryAfterMs: string | null = null
   let shouldRetry: string | null = null
   let providers: unknown = null
   let error: string | undefined
@@ -62,14 +63,15 @@ async function one(burst: number, idx: number) {
     })
     status = res.status
     retryAfter = res.headers.get('retry-after')
+    retryAfterMs = res.headers.get('retry-after-ms')
     shouldRetry = res.headers.get('x-should-retry')
     const json: any = await res.json().catch(() => null)
     providers = json?.providerMetadata?.gateway?.routing?.modelAttempts?.[0]?.providerAttempts?.map((p: any) => `${p.provider}:${p.statusCode ?? (p.success ? 200 : '?')}`)
-    if (!res.ok) error = json?.error?.message?.slice(0, 120)
+    if (!res.ok) error = (json?.error?.message ?? json?.detail?.message ?? JSON.stringify(json?.detail ?? null))?.slice(0, 120)
   } catch (e) {
     error = e instanceof Error ? e.message : String(e)
   }
-  const rec = { t, burst, idx, status, ms: Date.now() - t, retryAfter, shouldRetry, providers, error }
+  const rec = { t, burst, idx, status, ms: Date.now() - t, retryAfter, retryAfterMs, shouldRetry, providers, error }
   await appendFile(a.out!, JSON.stringify(rec) + '\n')
   return rec
 }

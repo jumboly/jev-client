@@ -26,6 +26,8 @@ export interface Answer {
   probability?: number
   probabilities?: Record<string, number>
   confidence?: number
+  /** score のみ（typesafe 経路で返る）。段階番号 → criteria の説明 */
+  legend?: Record<string, string>
 }
 
 export type JevProvider = 'gateway' | 'typesafe'
@@ -146,9 +148,8 @@ export async function evaluate(
       (shouldRetryHeader !== 'false' && (res.status === 429 || res.status >= 500 || res.status === 408))
     const msg = await res.text().catch(() => '')
     if (!retryable) throw new JevError(`JEV ${res.status}: ${extractMessage(msg)}`, res.status, false)
-    const ra = Number(res.headers.get('retry-after'))
     // 1 件の失敗で全員を待たせる。次の試行は acquire() が共有の待機時刻まで止める
-    const waitMs = gate.onTransientFailure(res.status, ra > 0 ? ra * 1000 : null)
+    const waitMs = gate.onTransientFailure(res.status, retryAfterMs(res.headers))
     if (attempt >= (opts.maxAttempts ?? MAX_ATTEMPTS)) throw new JevError(`JEV ${res.status}: ${extractMessage(msg)}`, res.status, true)
     opts.onRetry?.({ attempt, waitMs, status: res.status })
   }
@@ -172,9 +173,20 @@ function extractUsage(json: any): Usage {
   return { inputTokens, outputTokens, costUsd: market > 0 ? market : inputTokens * PRICE_PER_INPUT_TOKEN }
 }
 
+/** typesafe 経路は秒単位の retry-after に加えてミリ秒単位の retry-after-ms も公開しているので、あれば精度の高い方を使う */
+function retryAfterMs(headers: Headers): number | null {
+  const ms = Number(headers.get('retry-after-ms'))
+  if (ms > 0) return ms
+  const sec = Number(headers.get('retry-after'))
+  return sec > 0 ? sec * 1000 : null
+}
+
 function extractMessage(text: string): string {
   try {
-    return JSON.parse(text).error?.message ?? text
+    const json = JSON.parse(text)
+    // gateway は { error: { message } }、typesafe は { detail: { message } }（FastAPI 形式で detail が文字列のこともある）
+    const detail = json.detail
+    return json.error?.message ?? detail?.message ?? (typeof detail === 'string' ? detail : text)
   } catch {
     return text.slice(0, 200)
   }

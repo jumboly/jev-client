@@ -48,6 +48,19 @@ describe('evaluate: 再試行・時間切れ・非再試行エラー', () => {
     expect(gate.state.inFlight).toBe(0)
   })
 
+  it('retry-after-ms があれば retry-after より優先して待機時間にする', async () => {
+    stubFetch(() => fail(429, { 'retry-after': '60', 'retry-after-ms': '30' }), ok)
+    const waits: number[] = []
+    await evaluate(auth, 's', q, { gate: new JevGate(3), onRetry: (i) => waits.push(i.waitMs) })
+    expect(waits[0]).toBeLessThanOrEqual(30)
+  })
+
+  it('typesafe 形式のエラー本文（detail.message）をメッセージに使う', async () => {
+    stubFetch(() => new Response('{"detail":{"error_type":"api_usage_error","message":"Invalid request."}}', { status: 400 }))
+    const err = await evaluate({ mode: 'typesafe', apiKey: 't' }, 's', q, { gate: new JevGate(3) }).catch((e) => e)
+    expect(err).toMatchObject({ status: 400, retryable: false, message: 'JEV 400: Invalid request.' })
+  })
+
   it('x-should-retry: false なら 503 でも再試行しない', async () => {
     const calls = stubFetch(() => fail(503, { 'x-should-retry': 'false' }))
     const err = await evaluate(auth, 's', q, { gate: new JevGate(3) }).catch((e) => e)

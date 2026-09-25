@@ -51,20 +51,18 @@ usage.costUsd // 0.0000168
 | `mode` | 既定の URL | キー | 備考 |
 |---|---|---|---|
 | `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `AI_GATEWAY_API_KEY` | CORS 可なのでブラウザから直接呼べる。料金が返る |
-| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | 料金は返らないので概算になる。CORS は不明なのでブラウザからは透過プロキシ経由を推奨 |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | CORS 不可なので、ブラウザからは透過プロキシ経由で呼ぶ。料金は返らないので概算になる |
 
 - `url` を指定すると、その経路の形式のまま指定先へ送る。`apiKey` を省くと `Authorization` を付けない。
 - 経路による形式の違い（モデル名、boolean の呼び名、usage のキー名）はクライアントが吸収する。回答はどちらの経路でも同じ形で返る。
 - ブラウザでキーを扱うときは、利用者自身のキーをブラウザ内にだけ保存する。開発中は dev サーバーの透過プロキシでキーを付与すれば、バンドルにキーが入らない。
-
-> **注意**: `typesafe` 経路は公式ドキュメント（https://docs.typesafe.ai/api ）に合わせて実装したもので、実 API での確認はまだ。使う前に `npx jev-probe --mode typesafe --minutes 1 --burst 1` で確かめること。
 
 ## 質問と回答
 
 | 質問の `type` | `criteria` | 回答 |
 |---|---|---|
 | `choice` | `{ キー: 説明 }`（最大 255 個） | `choice`（選ばれたキー）、`probabilities`、`confidence` |
-| `score` | `[段階の説明, …]`（2〜10 段階） | `score`（段階間の連続値）、`probabilities`（キーは `"0"`, `"1"`, …）、`confidence` |
+| `score` | `[段階の説明, …]`（2〜10 段階） | `score`（段階間の連続値）、`probabilities`（キーは `"0"`, `"1"`, …）、`confidence`、`legend`（typesafe 経路のみ。段階番号 → 説明） |
 | `boolean` | `{ true?, false? }`（省略可） | `probability`（真である確率） |
 
 - `instructions` に判断の指示を書く。state は 32k トークンまで。
@@ -99,8 +97,8 @@ await evaluate(auth, state, questions, {
 
 | 状況 | 挙動 |
 |---|---|
-| 429 / 5xx / 408 / ネットワーク断・時間切れ | `retry-after`（無ければ指数バックオフ）を待って再試行。回数を使い切ったら `retryable: true` で投げる。時間切れ・ネットワーク断の `status` は 599 |
-| 401 / 403 / 422 などその他の 4xx | 再試行せずに `retryable: false` で投げる |
+| 429 / 5xx / 408 / ネットワーク断・時間切れ | `retry-after-ms` か `retry-after`（無ければ指数バックオフ）を待って再試行。回数を使い切ったら `retryable: true` で投げる。時間切れ・ネットワーク断の `status` は 599 |
+| 400 / 401 / 403 / 422 などその他の 4xx | 再試行せずに `retryable: false` で投げる（typesafe 経路は質問の形が不正だと 400） |
 | `x-should-retry` ヘッダがある | その指示に従う |
 | 共有の待機が `maxWaitMs` を超える | 送信せずに `status: 429`・`retryable: true` で投げる |
 
@@ -187,6 +185,7 @@ npm test            # vitest
 npm run typecheck
 npm run build       # dist/ を出力
 npm run probe -- --mode gateway --minutes 1   # ソースから jev-probe を実行（.env が必要）
+npx tsx scripts/verify-typesafe.ts             # typesafe 経路の生の応答・CORS・変換結果を確かめる（4 回送信）
 ```
 
 並行して開発しながら別プロジェクトで使うときは、利用側で `npm install ../jev-client` を実行する。symlink になるので、こちらで先に `npm run build` しておくこと。
