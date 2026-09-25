@@ -108,5 +108,5 @@ export function withFallback(...chain: Evaluator[]): Evaluator {
 
 /** 失敗理由がリトライ・代替で回復し得るか（UI の「再試行」表示判定用） */
 export function isRecoverable(e: unknown): boolean {
-  return !(e instanceof JevError) || e.retryable || e.status === 599
+  return !(e instanceof JevError) || e.retryable
 }

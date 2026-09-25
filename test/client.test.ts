@@ -61,6 +61,12 @@ describe('evaluate: 再試行・時間切れ・非再試行エラー', () => {
     expect(err).toMatchObject({ status: 400, retryable: false, message: 'JEV 400: Invalid request.' })
   })
 
+  it('既知の形でない JSON の本文は 200 文字で切ってメッセージにする', async () => {
+    stubFetch(() => new Response(JSON.stringify({ unexpected: 'x'.repeat(500) }), { status: 400 }))
+    const err = await evaluate(auth, 's', q, { gate: new JevGate(3) }).catch((e) => e)
+    expect(err.message).toBe(`JEV 400: ${JSON.stringify({ unexpected: 'x'.repeat(500) }).slice(0, 200)}`)
+  })
+
   it('x-should-retry: false なら 503 でも再試行しない', async () => {
     const calls = stubFetch(() => fail(503, { 'x-should-retry': 'false' }))
     const err = await evaluate(auth, 's', q, { gate: new JevGate(3) }).catch((e) => e)
@@ -160,7 +166,8 @@ describe('evaluate: 経路（gateway / typesafe / 透過プロキシ）', () => 
     expect(sent[0].url).toBe('https://api.typesafe.ai/v1/systemone')
     expect(sent[0].headers.authorization).toBe('Bearer t')
     expect(sent[0].body).toMatchObject({ model: 'jev-latest', questions: { b: { type: 'noul' }, c: { type: 'choice' } } })
-    expect(r.answers.b).toEqual({ type: 'boolean', probability: 0.3, confidence: undefined })
+    // confidence が無ければキー自体を付けない（toStrictEqual は undefined の値のキーも区別する）
+    expect(r.answers.b).toStrictEqual({ type: 'boolean', probability: 0.3 })
     expect(r.answers.c.confidence).toBe(0.9)
     expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 0, costUsd: 1000 * (0.042 / 1_000_000) })
   })

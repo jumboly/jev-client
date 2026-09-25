@@ -211,10 +211,13 @@ function extractMessage(text: string): string {
     const json = JSON.parse(text)
     // gateway は { error: { message } }、typesafe は { detail: { message } }（FastAPI 形式で detail が文字列のこともある）
     const detail = json.detail
-    return json.error?.message ?? detail?.message ?? (typeof detail === 'string' ? detail : text)
+    const known = json.error?.message ?? detail?.message ?? (typeof detail === 'string' ? detail : undefined)
+    if (known !== undefined) return known
   } catch {
-    return text.slice(0, 200)
+    // JSON でなければ下で本文をそのまま使う
   }
+  // 既知の形でない本文（HTML のエラーページなど）は長いことがあり、メッセージが読めなくなるので切る
+  return text.slice(0, 200)
 }
 
 function normalize(json: any): Record<string, Answer> {
@@ -223,7 +226,9 @@ function normalize(json: any): Record<string, Answer> {
   for (const [k, v] of Object.entries<any>(json.answers ?? {})) {
     // TypeSafe の直接 API の noul（{ type: 'noul', noul: 0..1 }）を gateway の boolean 形式に揃える
     const a = v.type === 'noul' ? (({ noul, ...rest }) => ({ ...rest, type: 'boolean', probability: noul }))(v) : v
-    out[k] = { ...a, confidence: a.confidence ?? conf[k] }
+    const confidence = a.confidence ?? conf[k]
+    // 値が無いときにキーだけ足すと、console.log や JSON に confidence: undefined が出てしまう
+    out[k] = confidence === undefined ? a : { ...a, confidence }
   }
   return out
 }
