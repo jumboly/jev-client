@@ -2,7 +2,7 @@
 
 TypeSafe AI Jev を呼ぶクライアント。Vercel AI Gateway 経由（`mode: 'gateway'`）と TypeSafe の直接 API（`mode: 'typesafe'`）の両方に対応し、`url` で透過プロキシにも向けられる。
 
-- 使い方・API の要点の正本は `README.md`（利用者向け。経緯は書かない）、実測結果の正本は `docs/probe-results.md`。JEV 全般の知識はスキル `j-jev` にある。
+- 使い方・API の要点の正本は `README.md`（利用者向け。経緯は書かない）、実測結果の正本は `docs/probe-results.md`。
 - 課題・残作業は GitHub issues（https://github.com/jumboly/jev-client/issues ）で管理する。
 - 確認: `npm test` / `npm run typecheck`。実 API を使う計測は `npm run probe -- --mode gateway|typesafe`（`.env` の `AI_GATEWAY_API_KEY` / `TYPESAFE_API_KEY`）。typesafe 経路の応答の形を確かめ直すときは `npx tsx scripts/verify-typesafe.ts`（4 回送信）。
 - 透過プロキシの動作確認には社内の api-egress-gateway（ソースは `~/src/api-egress-gateway`、`https://vercel-ai.gateway.jumboly.jp` / `https://typesafe.gateway.jumboly.jp`）を使える。送信元 IP 制限があるので、公開サイトの利用者のブラウザからは使えない。
@@ -18,4 +18,4 @@ TypeSafe AI Jev を呼ぶクライアント。Vercel AI Gateway 経由（`mode: 
 7. **経路は `source` ではなく別項目 `provider` で表す**（2026-09-25）。`source` は「JEV の判断か」の区別に使い続ける。
 8. **インスタンス API（`createJevClient`）は作らない**（2026-09-25）。`jevEvaluator(auth, { gate })` で足りる。
 9. **質問の形（候補数 255・score 2〜10 段階）を送信前にチェックしない**（2026-09-25）。仕様が変わり得るので、サーバーの 4xx に任せる。
-10. **特定の利用側プロジェクト（wikipedia-geo-runner など）に依存しない**（2026-09-25）。汎用のクライアントとして保ち、資料やコメントにも特定の利用側の事情を書かない。
+10. **特定の利用側プロジェクト（wikipedia-geo-runner など）やスキル `j-jev` とは無関係に保つ**（2026-09-25）。汎用のクライアントとして、資料やコメントにそれらの事情や参照を書かない。
