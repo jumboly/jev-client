@@ -69,7 +69,7 @@ const questions = {
 キーの入手先:
 
 - `gateway`: Vercel のダッシュボードの [AI Gateway API Keys](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys&title=AI+Gateway+API+Keys) で **Create key** を押す（[Vercel のドキュメント](https://vercel.com/docs/ai-gateway/authentication-and-byok)）。
-- `typesafe`: TypeSafe AI が発行する API キー（[API ドキュメント](https://docs.typesafe.ai/api)）。
+- `typesafe`: TypeSafe AI のコンソールの [API Keys](https://console.typesafe.ai/keys) で発行する（[API ドキュメント](https://docs.typesafe.ai/api)）。
 
 - `url` を指定すると、その経路の形式のまま指定先へ送る。`apiKey` を省くと `Authorization` を付けない。
 - 経路による形式の違い（モデル名、boolean の呼び名、usage のキー名）はクライアントが吸収する。回答はどちらの経路でも同じ形で返る。
