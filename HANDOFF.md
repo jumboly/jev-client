@@ -42,10 +42,8 @@ wikipedia-geo-runner（JEV Geo Race）の中で作った JEV クライアント�
 
 ## 残作業
 
-1. **タグ `v0.1.0` を打つ**（ユーザーに確認してから）。利用側が `github:jumboly/jev-client#v0.1.0` で固定できるようにする。
-2. **typesafe 経路で 429 を受けたときの確認**: 毎分 120 回では 429 が出なかった。実際に受けたら `retry-after` / `retry-after-ms` の値の意味を `docs/probe-results.md` に記録する（負荷をかけて意図的に起こすかはユーザーに確認）。
-3. **wikipedia-geo-runner を切り替える**: 依存を `github:jumboly/jev-client` にする（開発中は `file:../jev-client`、symlink なので先にこちらで `npm run build`）。`packages/jev-client/` と root `package.json` の `workspaces` を削除し、`probe` スクリプトを `jev-probe --mode gateway` にする。CI（GitHub Actions の `npm ci`）で解決できることを確認する。旧 `mode` を使っている 3 箇所（`src/storage/apiKey.ts:48,50`、`src/cli/race.ts:85`）を `mode: 'gateway'` に書き換える。向こうには未コミットの作業が混在しているので、コミットはユーザーに確認してから。ゲーム側が使っているもの: `evaluate` 系の型（`Answer`, `EvaluateOptions`, `JevAuth`, `JevError`）、`defaultGate` / `GateState`、`Evaluator` / `AnswerSource` / `jevEvaluator` / `mockEvaluator` / `replayEvaluator` / `recording` / `withFallback` / `memoryStore` / `isRecoverable`、`@jumboly/jev-client/node` の `fileStore`。
-4. **スキル `j-jev` のパスを更新**: `~/src/cc-jumboly/skills/j-jev/SKILL.md` の SDK の場所（現在は `~/src/jev-wiki-geo-runner/packages/jev-client/` と、そのリポジトリの GitHub URL）を新しいリポジトリに向け、2 経路（gateway / typesafe）に対応したことも書く。`~/.claude/skills/j-jev/` へ再インストールする（cc-jumboly の INSTALL.md の手順）。
+**GitHub issues で管理する**（https://github.com/jumboly/jev-client/issues ）。ここには書かない。
+2026-09-25 時点のおすすめの順番: #3（599 のバグ）→ #4（コードの整理）→ #5（README）→ #6（HANDOFF.md の廃止を含む資料整理）→ #1（タグ）。その後に #7（wikipedia-geo-runner の切り替え）と #8（j-jev スキル）。
 
 ## 確認コマンド
 
