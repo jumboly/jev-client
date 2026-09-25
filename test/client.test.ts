@@ -97,6 +97,15 @@ describe('evaluate: 再試行・時間切れ・非再試行エラー', () => {
     expect(gate.state.inFlight).toBe(0)
   })
 
+  it('サーバーが本当に 599 を返しても流量制御の枠を解放する', async () => {
+    const calls = stubFetch(() => fail(599), ok)
+    const gate = new JevGate(3)
+    const r = await evaluate(auth, 's', q, { gate })
+    expect(r.answers.q.choice).toBe('A')
+    expect(calls.n).toBe(2)
+    expect(gate.state.inFlight).toBe(0)
+  })
+
   it('呼び出し側の signal で中断したら再試行せずにそのまま投げる', async () => {
     const hang = (init: RequestInit) =>
       new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)))

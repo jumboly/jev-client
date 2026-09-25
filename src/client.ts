@@ -160,7 +160,8 @@ export async function evaluate(
       gate.onSuccess()
       return { answers: normalize(json), usage: extractUsage(json), provider }
     }
-    if (res.status !== 599) gate.release()
+    // 接続失敗は catch で解放済み。ステータスで判定すると、サーバーが本当に 599 を返したときに解放されず枠が減り続ける
+    if (!connectError) gate.release()
     const shouldRetryHeader = res.headers.get('x-should-retry')
     const retryable =
       shouldRetryHeader === 'true' ||
