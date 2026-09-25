@@ -3,7 +3,7 @@
 TypeSafe AI の意思決定モデル **Jev** を呼ぶための TypeScript クライアント。
 
 - **2 つの経路に対応**: Vercel AI Gateway 経由と TypeSafe AI の直接 API。URL を差し替えて透過プロキシ経由でも呼べる
-- **混雑に強い**: 429/503 を受けたら全呼び出しで待機を共有し、同時実行数と送信ペースを自動で落とす。時間切れ・再試行も込み
+- **混雑に強い**: 429/5xx などの一時的な失敗を受けたら全呼び出しで待機を共有し、同時実行数と送信ペースを自動で落とす。時間切れ・再試行も込み
 - **開発しやすい**: 録画再生・ダミーの判断役に差し替えられ、API を消費せずに動作確認できる
 - ブラウザ（Web Worker 含む）と Node（20.12 以上）で動く。ESM のみ
 
@@ -75,12 +75,15 @@ usage.costUsd // 0.0000168
 ```ts
 {
   answers: Record<string, Answer>
-  usage: { inputTokens: number; outputTokens: number; costUsd: number } // 出力は課金なし
+  usage: { inputTokens: number; outputTokens: number; costUsd: number }
   provider?: 'gateway' | 'typesafe' // 実際に呼んだ経路（mock では無し）
 }
 ```
 
-`costUsd` は、gateway では AI Gateway が返す定価ベースの料金。typesafe では、AI Gateway の公表単価（$0.042 / 100 万入力トークン）から出した概算。
+`costUsd` は経路で意味が違う。
+
+- gateway: AI Gateway が返す定価ベースの料金。AI Gateway では出力は課金なし。
+- typesafe: 料金が返らないので、AI Gateway の公表単価（$0.042 / 100 万入力トークン）から出した概算。直接 API の単価と、出力（`outputTokens` は 0 でない値が返る）が課金されるかは未確認。
 
 ## オプションとエラー
 
@@ -111,9 +114,11 @@ await evaluate(auth, state, questions, {
 
 同じプロセス（ブラウザでは同じ Worker）の呼び出しは、経路ごとに流量制御を共有する。
 
-- 1 件でも 429/503 を受けたら、同じ経路の全呼び出しが `retry-after` まで待つ（混雑中に叩き続けないため）。
-- 失敗で同時実行数を半減し、成功が続けば 1 ずつ戻す（既定の上限 3）。
+- 1 件でも再試行対象の失敗（429 / 5xx / 408 / ネットワーク断・時間切れ）を受けたら、同じ経路の全呼び出しが `retry-after`（無ければ指数バックオフ）まで待つ（混雑中に叩き続けないため）。
+- 同じ失敗で同時実行数を半減し、成功が 5 回続くごとに 1 ずつ戻す。
 - 1 分あたりの送信上限は既定で auto。普段は上限なしで、429 を受けたときだけ直近の成功数から上限を学習し、429 が止めば徐々に解除する。
+
+`new JevGate(maxConcurrency)` の引数は同時実行数の上限（`defaultGates` はどちらも 3）。
 
 ```ts
 import { defaultGate, defaultGates, JevGate } from '@jumboly/jev-client'
@@ -125,9 +130,24 @@ defaultGate.configure({ ratePerMin: 30 }) // 上限を固定（manual）
 defaultGate.configure({ ratePerMin: 0 })  // auto に戻す
 
 // 同じ上流へ向かう複数のプロキシで待機を共有したい、テストで分離したい、などのときは gate を渡す
-const shared = new JevGate(3)
+const shared = new JevGate(3) // 同時実行数の上限 3
 await evaluate(authA, state, questions, { gate: shared })
 ```
+
+`subscribe` に渡される状態（`GateState`）:
+
+| 項目 | 内容 |
+|---|---|
+| `cooldownUntil` | この時刻（epoch ミリ秒）まで全呼び出しを止める。0 なら待機なし |
+| `concurrency` | 今の同時実行数の上限（失敗で半減し、成功で戻る） |
+| `maxConcurrency` | `concurrency` が戻る上限（コンストラクタの引数） |
+| `inFlight` | 送信中の数 |
+| `consecutiveFailures` | 連続した失敗の数（指数バックオフに使う） |
+| `lastStatus` | 最後に失敗したときのステータス（接続失敗は 599） |
+| `rateMode` | `'auto'`（429 のときだけ学習）/ `'manual'`（`configure` で固定） |
+| `ratePerMin` | 1 分あたりの送信上限。0 なら上限なし |
+| `sentLastMinute` | 直近 60 秒の送信数 |
+| `rateWaitUntil` | 回数上限のため、この時刻（epoch ミリ秒）まで次の送信を待っている。0 なら待機なし |
 
 ## 判断役（`Evaluator`）の差し替え
 
