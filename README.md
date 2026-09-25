@@ -1,86 +1,192 @@
 # @jumboly/jev-client
 
-TypeSafe AI の **Jev** を呼ぶための小さなクライアント。Vercel AI Gateway のネイティブ HTTP API（`POST https://ai-gateway.vercel.sh/v1/evaluate`）と TypeSafe AI の直接 API（`POST https://api.typesafe.ai/v1/systemone`）の両方に対応し、URL を差し替えて透過プロキシ経由でも呼べる。ブラウザ（Web Worker 含む）と Node の両方で動く。
+TypeSafe AI の意思決定モデル **Jev** を呼ぶための TypeScript クライアント。
 
-JEV を使う別プロジェクトでも同じ失敗を繰り返さないために、wikipedia-geo-runner（JEV Geo Race）から切り出した。切り出し直後の残作業は `HANDOFF.md` を参照。
+- **2 つの経路に対応**: Vercel AI Gateway 経由と TypeSafe AI の直接 API。URL を差し替えて透過プロキシ経由でも呼べる
+- **混雑に強い**: 429/503 を受けたら全呼び出しで待機を共有し、同時実行数と送信ペースを自動で落とす。時間切れ・再試行も込み
+- **開発しやすい**: 録画再生・ダミーの判断役に差し替えられ、API を消費せずに動作確認できる
+- ブラウザ（Web Worker 含む）と Node（20.12 以上）で動く。ESM のみ
 
 ## インストール
 
-npm には公開していない。GitHub から直接入れる（インストール時に `prepare` が `dist/` をビルドする）。
+npm には公開していないので、GitHub から入れる（インストール時に `dist/` がビルドされる）。
 
 ```sh
-npm install github:jumboly/jev-client        # タグを固定するなら github:jumboly/jev-client#v0.1.0
-npm install ../jev-client                    # 並行して開発するとき（file: 参照。symlink なので先にこちらで npm run build）
+npm install github:jumboly/jev-client          # 最新
+npm install github:jumboly/jev-client#v0.1.0   # バージョンを固定
 ```
 
-`exports` はビルド済みの `dist/`（ESM + `.d.ts`）を指す。計測ツールは `npx jev-probe`（利用側の `.env` の `AI_GATEWAY_API_KEY` を読む）。
-
-## できること
-
-| 機能 | 内容 |
-|---|---|
-| `evaluate()` | choice / score / boolean の質問を送り、回答と使用量（入力トークン・定価ベースの料金）を返す |
-| 共有の流量制御 `JevGate` | 1 件でも 429/503 を受けたら全呼び出しが共有で待機する。失敗で同時実行数を半減し、成功が続けば回復する。1 分あたりの上限は既定で **auto**（上限なし。429 のときだけ学習し、止めば徐々に解除） |
-| 時間切れ | 1 リクエスト 20 秒で打ち切って再試行する（応答が返らず固まる呼び出しがあったため） |
-| 判断役 `Evaluator` | `jevEvaluator` / `mockEvaluator` / `replayEvaluator` を `withFallback` で連結し、`recording` で JEV の回答を録画できる。回答には `source`（jev / replay / mock）が付く |
-| `probe` | ゲートを通さない生の応答を記録し、エラー傾向を再計測する（`npm run probe`） |
-
-## 使い方
+## クイックスタート
 
 ```ts
-import { evaluate, defaultGate, jevEvaluator, withFallback, replayEvaluator, mockEvaluator, memoryStore } from '@jumboly/jev-client'
+import { evaluate } from '@jumboly/jev-client'
 
-const auth = { mode: 'gateway', apiKey } as const // Vercel AI Gateway（ブラウザ: ユーザーが入力したキー）
-// { mode: 'typesafe', apiKey }                        TypeSafe AI の直接 API
-// { mode: 'gateway', url: '/dev-jev/v1/evaluate' }    透過プロキシ経由（キーはプロキシ側で付与するなら apiKey 不要）
-// { mode: 'typesafe', url: 'https://my-proxy/...', apiKey }  プロキシがキーを素通しする場合
-const { answers, usage } = await evaluate(auth, { goal: '大坂城周辺' }, {
-  move: { type: 'choice', instructions: '次に進むリンクを選べ', criteria: { L1: '大阪市', L2: '1868年' } },
-})
+const { answers, usage } = await evaluate(
+  { mode: 'gateway', apiKey: process.env.AI_GATEWAY_API_KEY },
+  { article: '大阪府', goal: '大坂城から半径 2km 以内' }, // state: 判断の材料（文字列・オブジェクト・配列）
+  {
+    next: { type: 'choice', instructions: 'ゴールに近づくリンクを選べ', criteria: { L1: '大阪市', L2: '近畿地方', L3: '1868年' } },
+    near: { type: 'boolean', instructions: 'ゴールに近いか' },
+  },
+)
 
-// 流量制御は経路ごとに別（defaultGates.gateway / defaultGates.typesafe。defaultGate は gateway 用）
-defaultGate.subscribe((s) => console.log(s.cooldownUntil, s.concurrency, s.ratePerMin)) // UI に待機状況を出す
-defaultGate.configure({ ratePerMin: 0 }) // 0 = auto（既定）、正の数 = 固定
-// 別の gate を共有させたいとき（例: 同じ上流へ向かう複数の透過プロキシ）
-const viaProxy = jevEvaluator({ mode: 'gateway', url: 'https://my-proxy/v1/evaluate' }, { gate: defaultGate })
-
-// 開発・テスト: JEV → 録画 → ダミー の順に代替（本番で混ぜる場合は source で区別すること）
-const ev = withFallback(jevEvaluator(auth), replayEvaluator(memoryStore()), mockEvaluator({ avoidKeys: ['BACK'] }))
+answers.next.choice // 'L1'
+answers.next.probabilities // { L1: 0.82, L2: 0.15, L3: 0.03 }
+answers.near.probability // 0.64
+usage.costUsd // 0.0000168
 ```
 
-Node では `import { fileStore } from '@jumboly/jev-client/node'` で録画をファイルに保存できる。
+## 経路を選ぶ（`JevAuth`）
 
-## 経路（`JevAuth`）
+`mode` は必須。経路ごとに形式・料金・混雑の傾向が違うため、既定の経路は持たない。
 
-| `mode` | 既定の URL | モデル名 | 違い |
+```ts
+{ mode: 'gateway', apiKey }                                    // Vercel AI Gateway
+{ mode: 'typesafe', apiKey }                                   // TypeSafe AI の直接 API
+{ mode: 'gateway', url: '/dev-jev/v1/evaluate' }               // 透過プロキシ（キーはプロキシ側で付与）
+{ mode: 'typesafe', url: 'https://my-proxy.example/jev', apiKey } // 透過プロキシ（キーを素通し）
+{ mode: 'mock', avoidKeys: ['BACK'] }                          // API を呼ばず乱数で答える（開発用）
+```
+
+| `mode` | 既定の URL | キー | 備考 |
 |---|---|---|---|
-| `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `typesafe-ai/jev` | CORS 可。料金（`marketCost`）が返る |
-| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `jev-latest` | boolean は `noul`、usage は snake_case。料金は返らない |
-| `mock` | — | — | API を呼ばない（開発・テスト用） |
+| `gateway` | `https://ai-gateway.vercel.sh/v1/evaluate` | `AI_GATEWAY_API_KEY` | CORS 可なのでブラウザから直接呼べる。料金が返る |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | 料金は返らないので概算になる。CORS は不明なのでブラウザからは透過プロキシ経由を推奨 |
 
-- `url` を指定すると、その経路の形式のまま別の URL（透過プロキシ）へ送る。`apiKey` を省略すると `Authorization` を付けない。
-- 結果の `provider`（`evaluate()` の戻り値と `Evaluator` の結果）で、どちらの経路の回答かを区別できる。`source` は「JEV の判断か」を表し、経路は含めない。
-- 流量制御は経路ごとに別（片方の 429 で空いている経路まで止めないため）。
-- 質問の形（候補数・段階数）は送信前にチェックしない。仕様が変わり得るので、サーバーの 4xx（再試行しない `JevError`）に任せる。
-- 回答は経路によらず gateway の形式（boolean は `probability`）に揃えるので、利用側と録画は経路に依存しない。
-- `typesafe` の料金は AI Gateway の公表単価からの概算（直接 API の単価は未確認）。
-- `mode` は必須で、既定の経路は持たない（経路で形式・料金・エラー傾向が違うため、呼び出し側で明示する）。
-- `typesafe` の形式は公式ドキュメント（https://docs.typesafe.ai/api 、2026-09）に基づく。**実 API ではまだ確認していない**ため、使う前に `npm run probe -- --mode typesafe` で確かめること。
+- `url` を指定すると、その経路の形式のまま指定先へ送る。`apiKey` を省くと `Authorization` を付けない。
+- 経路による形式の違い（モデル名、boolean の呼び名、usage のキー名）はクライアントが吸収する。回答はどちらの経路でも同じ形で返る。
+- ブラウザでキーを扱うときは、利用者自身のキーをブラウザ内にだけ保存する。開発中は dev サーバーの透過プロキシでキーを付与すれば、バンドルにキーが入らない。
 
-## API の要点（2026-09 時点）
+> **注意**: `typesafe` 経路は公式ドキュメント（https://docs.typesafe.ai/api ）に合わせて実装したもので、実 API での確認はまだ。使う前に `npx jev-probe --mode typesafe --minutes 1 --burst 1` で確かめること。
 
-- 認証は `Authorization: Bearer <キー>`（gateway は `AI_GATEWAY_API_KEY`、typesafe は `TYPESAFE_API_KEY`）。AI Gateway は CORS を許可しており、`retry-after` と `x-should-retry` も公開ヘッダ。
-- choice は最大 255 候補、score は 2〜10 段階（`score` は段階間の連続値で、`probabilities` のキーは `"0"`, `"1"`, …）。state は 32k トークンまで。
-- `confidence` は各回答と `providerMetadata.typesafe.confidence` の両方に入る。料金は `providerMetadata.gateway.marketCost`（定価ベース）。
-- typesafe の直接 API は 401（キー不正）/ 422（検証エラー）/ 429 / 529（過負荷）を返すとされる。429 と 5xx は再試行する。CORS と `retry-after` は文書に記載が無い（ブラウザからは透過プロキシ経由を想定）。
-- `providerOptions.gateway.zeroDataRetention` は Vercel **Pro 以上のみ**。Hobby では 403 になる。
-- OpenAI 互換クライアントからは使えない（evaluate 系の API を使う）。
+## 質問と回答
 
-## エラー傾向の実測（2026-09-25・一時的な値）
+| 質問の `type` | `criteria` | 回答 |
+|---|---|---|
+| `choice` | `{ キー: 説明 }`（最大 255 個） | `choice`（選ばれたキー）、`probabilities`、`confidence` |
+| `score` | `[段階の説明, …]`（2〜10 段階） | `score`（段階間の連続値）、`probabilities`（キーは `"0"`, `"1"`, …）、`confidence` |
+| `boolean` | `{ true?, false? }`（省略可） | `probability`（真である確率） |
 
-JEV 公開直後の混雑による**一時的な傾向**と考えられるため、**固定値としてコードに持たない**こと。判断の前に `npm run probe` で再計測する。
+- `instructions` に判断の指示を書く。state は 32k トークンまで。
+- 上限を超えた質問はサーバーが 4xx で拒否する（送信前にはチェックしない）。
 
-- 429: 毎分約 30 回の上限超過として振る舞った。`retry-after` は次の分の区切りまでの秒数。
-- 503/500: 上流プロバイダ（digitalocean）の障害。数秒単位で連続する（直前が 5xx なら次も 62%）。
-- エラーは強く連続する（直前がエラーなら次も 98%）。そのため各呼び出しが独立に再試行するより、全体で待つほうがよい。
-- 成功時の遅延は中央値 0.34 秒。まれに 30 秒応答が返らない。
+戻り値:
+
+```ts
+{
+  answers: Record<string, Answer>
+  usage: { inputTokens: number; outputTokens: number; costUsd: number } // 出力は課金なし
+  provider?: 'gateway' | 'typesafe' // 実際に呼んだ経路（mock では無し）
+}
+```
+
+`costUsd` は、gateway では AI Gateway が返す定価ベースの料金。typesafe では、AI Gateway の公表単価（$0.042 / 100 万入力トークン）から出した概算。
+
+## オプションとエラー
+
+```ts
+await evaluate(auth, state, questions, {
+  signal,         // AbortSignal。中断したら再試行せずに投げる
+  timeoutMs,      // 1 リクエストの打ち切り（既定 20 秒）。打ち切ったら再試行する
+  maxAttempts,    // 最大試行回数（既定 20）
+  maxWaitMs,      // 共有の待機がこれより長ければ待たずに失敗させる（代替へ早く切り替えたいとき）
+  onRetry,        // ({ attempt, waitMs, status }) => void。UI に「混雑中・再試行中」を出す
+  gate,           // 流量制御を差し替える（後述）
+})
+```
+
+失敗すると `JevError`（`status`、`retryable`）を投げる。
+
+| 状況 | 挙動 |
+|---|---|
+| 429 / 5xx / 408 / ネットワーク断・時間切れ | `retry-after`（無ければ指数バックオフ）を待って再試行。回数を使い切ったら `retryable: true` で投げる。時間切れ・ネットワーク断の `status` は 599 |
+| 401 / 403 / 422 などその他の 4xx | 再試行せずに `retryable: false` で投げる |
+| `x-should-retry` ヘッダがある | その指示に従う |
+| 共有の待機が `maxWaitMs` を超える | 送信せずに `status: 429`・`retryable: true` で投げる |
+
+`isRecoverable(e)` で、再試行や代替で回復し得る失敗かを判定できる。
+
+## 流量制御（`JevGate`）
+
+同じプロセス（ブラウザでは同じ Worker）の呼び出しは、経路ごとに流量制御を共有する。
+
+- 1 件でも 429/503 を受けたら、同じ経路の全呼び出しが `retry-after` まで待つ（混雑中に叩き続けないため）。
+- 失敗で同時実行数を半減し、成功が続けば 1 ずつ戻す（既定の上限 3）。
+- 1 分あたりの送信上限は既定で auto。普段は上限なしで、429 を受けたときだけ直近の成功数から上限を学習し、429 が止めば徐々に解除する。
+
+```ts
+import { defaultGate, defaultGates, JevGate } from '@jumboly/jev-client'
+
+// 待機状況を UI に出す（defaultGate は defaultGates.gateway と同じもの）
+defaultGates.gateway.subscribe((s) => render(s.cooldownUntil, s.concurrency, s.ratePerMin, s.inFlight))
+
+defaultGate.configure({ ratePerMin: 30 }) // 上限を固定（manual）
+defaultGate.configure({ ratePerMin: 0 })  // auto に戻す
+
+// 同じ上流へ向かう複数のプロキシで待機を共有したい、テストで分離したい、などのときは gate を渡す
+const shared = new JevGate(3)
+await evaluate(authA, state, questions, { gate: shared })
+```
+
+## 判断役（`Evaluator`）の差し替え
+
+アプリは `evaluate()` を直接呼ぶ代わりに `Evaluator` を通すと、JEV・録画・ダミーを差し替えたりつないだりできる。
+
+```ts
+import { jevEvaluator, mockEvaluator, replayEvaluator, recording, withFallback, memoryStore } from '@jumboly/jev-client'
+import { fileStore } from '@jumboly/jev-client/node' // Node のみ: 録画を JSON ファイルに保存
+
+const store = await fileStore('.cache/recordings.json') // ブラウザやテストでは memoryStore()
+const jev = recording(jevEvaluator(auth), store)         // JEV の回答を録画しながら使う
+
+// JEV が失敗したら録画 → ダミーの順に代わりに答える（開発・テスト用）
+const ev = withFallback(jev, replayEvaluator(store), mockEvaluator({ avoidKeys: ['BACK'] }))
+
+const r = await ev(state, questions)
+r.source   // 'jev' | 'replay' | 'mock'  … 誰が答えたか
+r.provider // 'gateway' | 'typesafe'     … source が 'jev' のときの経路
+r.usage    // source が 'jev' のときのみ
+```
+
+- 録画のキーは state と質問の内容から作るので、同じ局面なら経路によらず再生できる。録画に無い局面では `replayEvaluator` が `ReplayMissError` を投げる。
+- **録画やダミーの回答は JEV の判断ではない。** 本番で `withFallback` を使う場合は `source` を見て区別し、JEV の結果として扱わないこと。
+- `jevEvaluator(auth, { gate })` で、その Evaluator が使う流量制御を固定できる。
+
+## 混雑の傾向を測る（`jev-probe`）
+
+流量制御を通さずに一定間隔で送り、生の応答（ステータス、`retry-after`、所要時間）を JSONL に記録する。混雑の傾向は時期によって変わるので、上限などを判断する前に測り直すこと。少量なら料金は 1 円未満。
+
+```sh
+# キーは実行ディレクトリの .env（AI_GATEWAY_API_KEY / TYPESAFE_API_KEY）か環境変数から読む
+npx jev-probe --mode gateway --minutes 1 --interval 2000 --burst 2
+npx jev-probe --mode typesafe --minutes 1 --burst 1
+npx jev-probe --mode gateway --url https://my-proxy.example/v1/evaluate   # プロキシがキーを付けるならキー不要
+```
+
+| オプション | 既定 | 内容 |
+|---|---|---|
+| `--mode` | （必須） | `gateway` / `typesafe` |
+| `--url` | 経路の公式 URL | 送信先 |
+| `--minutes` | 6 | 計測時間 |
+| `--interval` | 1000 | 送信間隔（ミリ秒） |
+| `--burst` | 4 | 1 回に同時に送る数 |
+| `--out` | `.cache/probe.jsonl` | 出力先 |
+
+これまでの計測結果: [docs/probe-results.md](docs/probe-results.md)
+
+## 注意点
+
+- OpenAI 互換の API からは呼べない（evaluate 系の専用 API を使う）。
+- AI Gateway の `zeroDataRetention` は Vercel Pro 以上限定で、Hobby では 403 になる。このクライアントは指定しない。
+
+## 開発
+
+```sh
+npm install
+npm test            # vitest
+npm run typecheck
+npm run build       # dist/ を出力
+npm run probe -- --mode gateway --minutes 1   # ソースから jev-probe を実行（.env が必要）
+```
+
+並行して開発しながら別プロジェクトで使うときは、利用側で `npm install ../jev-client` を実行する。symlink になるので、こちらで先に `npm run build` しておくこと。
